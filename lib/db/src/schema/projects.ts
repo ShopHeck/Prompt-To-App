@@ -10,6 +10,7 @@ export const projectsTable = pgTable("projects", {
   status: text("status").notNull().default("pending"),
   framework: text("framework").notNull().default("swiftui"),
   fileCount: integer("file_count").notNull().default(0),
+  shareToken: text("share_token").unique(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });

@@ -116,6 +116,48 @@ paths:
                 items:
                   $ref: "#/components/schemas/ProjectFile"
 
+  /projects/{id}/share:
+    post:
+      operationId: shareProject
+      tags: [projects]
+      summary: Generate a public share token for a project
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Share token and URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShareResult"
+        "404":
+          description: Not found
+
+  /share/{token}:
+    get:
+      operationId: getSharedProject
+      tags: [projects]
+      summary: Get a shared project by token (public, read-only)
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Shared project with files
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SharedProject"
+        "404":
+          description: Not found
+
   /projects/{id}/generate:
     post:
       operationId: generateApp
@@ -285,3 +327,27 @@ components:
         - totalFilesGenerated
         - completedProjects
         - frameworkBreakdown
+
+    ShareResult:
+      type: object
+      properties:
+        token:
+          type: string
+        url:
+          type: string
+      required:
+        - token
+        - url
+
+    SharedProject:
+      type: object
+      properties:
+        project:
+          $ref: "#/components/schemas/Project"
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectFile"
+      required:
+        - project
+        - files

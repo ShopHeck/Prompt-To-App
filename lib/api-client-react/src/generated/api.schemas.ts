@@ -79,3 +79,13 @@ export interface ProjectStats {
   completedProjects: number;
   frameworkBreakdown: ProjectStatsFrameworkBreakdown;
 }
+
+export interface ShareResult {
+  token: string;
+  url: string;
+}
+
+export interface SharedProject {
+  project: Project;
+  files: ProjectFile[];
+}

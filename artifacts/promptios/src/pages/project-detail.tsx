@@ -8,7 +8,7 @@ import {
   getGetProjectFilesQueryKey
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { FileCode, Play, RotateCw, AlertTriangle, File, ChevronRight, CheckCircle2, Copy, Download, Code2, Cpu } from "lucide-react";
+import { FileCode, Play, RotateCw, AlertTriangle, File, ChevronRight, CheckCircle2, Copy, Download, Code2, Cpu, Share2, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
@@ -136,6 +136,22 @@ export default function ProjectDetail() {
     document.body.removeChild(link);
   };
 
+  const [isCopiedLink, setIsCopiedLink] = useState(false);
+  const handleShare = async () => {
+    if (!projectId) return;
+    try {
+      const res = await fetch(`/api/projects/${projectId}/share`, { method: "POST" });
+      if (!res.ok) throw new Error("Failed");
+      const { url } = await res.json();
+      await navigator.clipboard.writeText(url);
+      setIsCopiedLink(true);
+      toast({ title: "Link copied!", description: "Share link copied to clipboard." });
+      setTimeout(() => setIsCopiedLink(false), 3000);
+    } catch {
+      toast({ title: "Error", description: "Could not generate share link.", variant: "destructive" });
+    }
+  };
+
   const copyToClipboard = () => {
     if (selectedFile?.content) {
       navigator.clipboard.writeText(selectedFile.content);
@@ -201,15 +217,27 @@ export default function ProjectDetail() {
           
           <div className="flex items-center gap-2">
             {project?.status === 'complete' && (files?.length ?? 0) > 0 && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={handleDownload}
-                className="gap-2 font-mono text-xs"
-                title="Download as Xcode-ready zip"
-              >
-                <Download className="h-3 w-3" /> Download .zip
-              </Button>
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleShare}
+                  className="gap-2 font-mono text-xs"
+                  title="Copy shareable link"
+                >
+                  {isCopiedLink ? <Check className="h-3 w-3 text-green-400" /> : <Share2 className="h-3 w-3" />}
+                  {isCopiedLink ? "Copied!" : "Share"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleDownload}
+                  className="gap-2 font-mono text-xs"
+                  title="Download as Xcode-ready zip"
+                >
+                  <Download className="h-3 w-3" /> Download .zip
+                </Button>
+              </>
             )}
             <Button 
               size="sm" 

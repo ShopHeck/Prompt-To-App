@@ -85,6 +85,50 @@ export const GetProjectFilesResponseItem = zod.object({
 export const GetProjectFilesResponse = zod.array(GetProjectFilesResponseItem);
 
 /**
+ * @summary Generate a public share token for a project
+ */
+export const ShareProjectParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const ShareProjectResponse = zod.object({
+  token: zod.string(),
+  url: zod.string(),
+});
+
+/**
+ * @summary Get a shared project by token (public, read-only)
+ */
+export const GetSharedProjectParams = zod.object({
+  token: zod.coerce.string(),
+});
+
+export const GetSharedProjectResponse = zod.object({
+  project: zod.object({
+    id: zod.number(),
+    name: zod.string(),
+    prompt: zod.string(),
+    description: zod.string().nullable(),
+    status: zod.enum(["pending", "generating", "complete", "error"]),
+    framework: zod.enum(["swiftui", "uikit"]),
+    fileCount: zod.number(),
+    createdAt: zod.string(),
+    updatedAt: zod.string(),
+  }),
+  files: zod.array(
+    zod.object({
+      id: zod.number(),
+      projectId: zod.number(),
+      filename: zod.string(),
+      filepath: zod.string(),
+      content: zod.string(),
+      language: zod.string(),
+      createdAt: zod.string(),
+    }),
+  ),
+});
+
+/**
  * @summary Generate iOS app code from a prompt (streaming)
  */
 export const GenerateAppParams = zod.object({

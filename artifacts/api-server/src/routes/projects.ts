@@ -150,6 +150,61 @@ router.get("/projects/:id/files", async (req, res) => {
   }
 });
 
+// POST /projects/:id/share  (generate or return existing share token)
+router.post("/projects/:id/share", async (req, res) => {
+  try {
+    const { id } = GetProjectParams.parse(req.params);
+    const [project] = await db
+      .select()
+      .from(projectsTable)
+      .where(eq(projectsTable.id, id));
+
+    if (!project) return res.status(404).json({ error: "Project not found" });
+
+    let token = project.shareToken;
+    if (!token) {
+      token = crypto.randomUUID();
+      await db
+        .update(projectsTable)
+        .set({ shareToken: token })
+        .where(eq(projectsTable.id, id));
+    }
+
+    const host = req.headers["x-forwarded-host"] ?? req.headers.host ?? "localhost";
+    const protocol = req.headers["x-forwarded-proto"] ?? "https";
+    const url = `${protocol}://${host}/share/${token}`;
+
+    res.json({ token, url });
+  } catch (err) {
+    req.log.error({ err }, "Failed to create share token");
+    res.status(500).json({ error: "Failed to create share token" });
+  }
+});
+
+// GET /share/:token  (public read-only view)
+router.get("/share/:token", async (req, res) => {
+  try {
+    const token = req.params.token;
+    const [project] = await db
+      .select()
+      .from(projectsTable)
+      .where(eq(projectsTable.shareToken, token));
+
+    if (!project) return res.status(404).json({ error: "Shared project not found" });
+
+    const files = await db
+      .select()
+      .from(projectFilesTable)
+      .where(eq(projectFilesTable.projectId, project.id))
+      .orderBy(projectFilesTable.filepath);
+
+    res.json({ project, files });
+  } catch (err) {
+    req.log.error({ err }, "Failed to get shared project");
+    res.status(500).json({ error: "Failed to get shared project" });
+  }
+});
+
 // GET /projects/:id/download  (zip all generated files)
 router.get("/projects/:id/download", async (req, res) => {
   try {
