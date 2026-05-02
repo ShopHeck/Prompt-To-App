@@ -3,13 +3,17 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: API specification for Prompt to iOS App Generator
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: projects
+    description: iOS app project operations
+  - name: generate
+    description: AI code generation operations
 paths:
   /healthz:
     get:
@@ -24,6 +28,147 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /projects:
+    get:
+      operationId: listProjects
+      tags: [projects]
+      summary: List all projects
+      responses:
+        "200":
+          description: List of projects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Project"
+    post:
+      operationId: createProject
+      tags: [projects]
+      summary: Create a new project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProjectBody"
+      responses:
+        "201":
+          description: Created project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+
+  /projects/{id}:
+    get:
+      operationId: getProject
+      tags: [projects]
+      summary: Get a project by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Project details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteProject
+      tags: [projects]
+      summary: Delete a project
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /projects/{id}/files:
+    get:
+      operationId: getProjectFiles
+      tags: [projects]
+      summary: Get all generated files for a project
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of files
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProjectFile"
+
+  /projects/{id}/generate:
+    post:
+      operationId: generateApp
+      tags: [generate]
+      summary: Generate iOS app code from a prompt (streaming)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerateAppBody"
+      responses:
+        "200":
+          description: SSE stream of generated code
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  /projects/recent:
+    get:
+      operationId: getRecentProjects
+      tags: [projects]
+      summary: Get the 5 most recently updated projects
+      responses:
+        "200":
+          description: Recent projects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Project"
+
+  /projects/stats:
+    get:
+      operationId: getProjectStats
+      tags: [projects]
+      summary: Get aggregate stats (total projects, total files generated, etc.)
+      responses:
+        "200":
+          description: Stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectStats"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +179,109 @@ components:
       required:
         - status
 
+    Project:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        prompt:
+          type: string
+        description:
+          type: ["string", "null"]
+        status:
+          type: string
+          enum: [pending, generating, complete, error]
+        framework:
+          type: string
+          enum: [swiftui, uikit]
+        fileCount:
+          type: integer
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required:
+        - id
+        - name
+        - prompt
+        - description
+        - status
+        - framework
+        - fileCount
+        - createdAt
+        - updatedAt
+
+    CreateProjectBody:
+      type: object
+      properties:
+        name:
+          type: string
+        prompt:
+          type: string
+        framework:
+          type: string
+          enum: [swiftui, uikit]
+      required:
+        - name
+        - prompt
+        - framework
+
+    ProjectFile:
+      type: object
+      properties:
+        id:
+          type: integer
+        projectId:
+          type: integer
+        filename:
+          type: string
+        filepath:
+          type: string
+        content:
+          type: string
+        language:
+          type: string
+        createdAt:
+          type: string
+      required:
+        - id
+        - projectId
+        - filename
+        - filepath
+        - content
+        - language
+        - createdAt
+
+    GenerateAppBody:
+      type: object
+      properties:
+        additionalContext:
+          type: ["string", "null"]
+      required: []
+
+    ProjectStats:
+      type: object
+      properties:
+        totalProjects:
+          type: integer
+        totalFilesGenerated:
+          type: integer
+        completedProjects:
+          type: integer
+        frameworkBreakdown:
+          type: object
+          properties:
+            swiftui:
+              type: integer
+            uikit:
+              type: integer
+          required:
+            - swiftui
+            - uikit
+      required:
+        - totalProjects
+        - totalFilesGenerated
+        - completedProjects
+        - frameworkBreakdown
