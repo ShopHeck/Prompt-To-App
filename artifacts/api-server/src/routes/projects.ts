@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { projectsTable, projectFilesTable } from "@workspace/db";
 import { eq, desc, count, sum, and } from "drizzle-orm";
+import JSZip from "jszip";
 import {
   CreateProjectBody,
   GetProjectParams,
@@ -146,6 +147,47 @@ router.get("/projects/:id/files", async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "Failed to get project files");
     res.status(500).json({ error: "Failed to get project files" });
+  }
+});
+
+// GET /projects/:id/download  (zip all generated files)
+router.get("/projects/:id/download", async (req, res) => {
+  try {
+    const { id } = GetProjectParams.parse(req.params);
+    const [project] = await db
+      .select()
+      .from(projectsTable)
+      .where(eq(projectsTable.id, id));
+
+    if (!project) return res.status(404).json({ error: "Project not found" });
+
+    const files = await db
+      .select()
+      .from(projectFilesTable)
+      .where(eq(projectFilesTable.projectId, id))
+      .orderBy(projectFilesTable.filepath);
+
+    if (files.length === 0) {
+      return res.status(404).json({ error: "No files to download" });
+    }
+
+    const zip = new JSZip();
+    const folderName = project.name.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const folder = zip.folder(folderName)!;
+
+    for (const file of files) {
+      folder.file(file.filepath, file.content);
+    }
+
+    const buffer = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${folderName}.zip"`);
+    res.setHeader("Content-Length", buffer.length);
+    res.send(buffer);
+  } catch (err) {
+    req.log.error({ err }, "Failed to create download zip");
+    res.status(500).json({ error: "Failed to create zip" });
   }
 });
 

@@ -8,7 +8,7 @@ import {
   getGetProjectFilesQueryKey
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { FileCode, Play, RotateCw, AlertTriangle, File, ChevronRight, CheckCircle2, Copy } from "lucide-react";
+import { FileCode, Play, RotateCw, AlertTriangle, File, ChevronRight, CheckCircle2, Copy, Download, Code2, Cpu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
@@ -126,6 +126,16 @@ export default function ProjectDetail() {
 
   const selectedFile = files?.find(f => f.id === selectedFileId);
 
+  const handleDownload = () => {
+    if (!projectId) return;
+    const link = document.createElement("a");
+    link.href = `/api/projects/${projectId}/download`;
+    link.download = `${project?.name ?? "project"}.zip`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const copyToClipboard = () => {
     if (selectedFile?.content) {
       navigator.clipboard.writeText(selectedFile.content);
@@ -189,7 +199,18 @@ export default function ProjectDetail() {
             )}
           </div>
           
-          <div>
+          <div className="flex items-center gap-2">
+            {project?.status === 'complete' && (files?.length ?? 0) > 0 && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleDownload}
+                className="gap-2 font-mono text-xs"
+                title="Download as Xcode-ready zip"
+              >
+                <Download className="h-3 w-3" /> Download .zip
+              </Button>
+            )}
             <Button 
               size="sm" 
               variant={project?.status === 'complete' ? "outline" : "default"}
