@@ -803,6 +803,7 @@ Status rules:
 - "extra": for output items NOT in the plan that look unrelated. Only flag if clearly off-topic; small helpers are fine.
 
 Studio-grade quality bar (used to decide matched vs. off-spec, and to drive overallScore):
+- FUNCTIONAL COMPLETENESS (most important): every interactive feature actually works end-to-end. For game apps: legal move validation runs, the AI opponent makes real moves after the human plays, win/loss/draw is detected and shown. For data apps: CRUD persists immediately. For forms: submit validates + writes + gives feedback. A beautiful app with dead logic scores 0-24 regardless of visual quality.
 - Design system: there is a Theme/DesignSystem file with color palette + typography + spacing tokens. Other files use those tokens, NOT hardcoded colors / font sizes.
 - States: list / data-driven screens have explicit loading, empty, and error states (or compose dedicated state-view components).
 - Realistic data: seed data is varied and believable, not "Item 1, Item 2".
@@ -812,11 +813,11 @@ Studio-grade quality bar (used to decide matched vs. off-spec, and to drive over
 - Persistence + Settings: when relevant to the app, there is a persistence layer and a Settings screen.
 
 Scoring rubric (overallScore is the holistic result, not a strict average):
-- 90-100: Plan complete + all studio-grade quality bars met. Reviewer would happily ship.
-- 75-89: Plan complete but 1-2 quality gaps (e.g. design system used inconsistently, missing some empty states).
-- 50-74: Plan complete but quality is mediocre — many hardcoded colors, weak states, no haptics/animations, dated patterns.
-- 25-49: Plan partially missing AND quality is weak.
-- 0-24: Plan largely missing or output is broken.
+- 90-100: Fully functional + plan complete + all studio-grade quality bars met. Reviewer would happily ship.
+- 75-89: Functional + plan complete but 1-2 quality gaps (design system inconsistent, missing some empty states).
+- 50-74: Functional but mediocre quality — hardcoded colors, weak states, no haptics/animations, dated patterns.
+- 25-49: Partially functional OR plan partially missing AND quality is weak.
+- 0-24: Core features don't work (game AI doesn't move, forms don't submit, buttons are dead) OR plan largely missing.
 
 Notes guidance:
 - Keep notes <= 14 words and SPECIFIC. Examples: "uses hardcoded #FF0000 instead of Theme.colors.danger", "no empty state for empty list", "uses NavigationView (deprecated)", "missing accessibility labels on icon buttons".
@@ -902,7 +903,7 @@ async function runRepairPass(
     .map(f => `- ${f.filepath}`)
     .join("\n");
 
-  const systemPrompt = `You are a principal iOS engineer doing a targeted POLISH + REPAIR pass on a studio-grade ${frameworkName} app. Regenerate ONLY the files listed below — either because they are missing OR because they fall short of the studio quality bar (hardcoded colors, missing states, weak accessibility, dated SwiftUI patterns, etc.). Do not touch any other file.
+  const systemPrompt = `You are a principal iOS engineer doing a targeted REPAIR pass on a studio-grade ${frameworkName} app. Regenerate ONLY the files listed below — either because they are missing OR because they fall short of the quality bar. Do not touch any other file.
 
 Output ONLY JSON of this shape:
 {
@@ -911,7 +912,18 @@ Output ONLY JSON of this shape:
   ]
 }
 
-Rules:
+FUNCTIONAL COMPLETENESS (highest priority — repair broken logic first):
+- Every function, method, and computed property MUST have a real working implementation. No empty bodies, no "// TODO:", no stubs.
+- GAME ENGINE FILES: if repairing a game engine or AI player, implement the complete logic:
+  • All piece/move rules fully enforced (no partially-implemented movement).
+  • Win/loss/draw detection fully implemented and returning the correct result.
+  • AI opponent picks and returns a real move every time it is called. Minimum: pick a random legal move from the generated legal-move list. Better: 2-ply minimax with basic material evaluation. The AI must NEVER return nil or a no-op — it always makes a move.
+  • Turn management: the engine enforces whose turn it is and rejects out-of-turn moves.
+- GAME VIEWMODEL FILES: after applying the human's move, immediately trigger the AI's move (via \`Task { await aiPlayer.makeMove() }\`) before returning to the UI.
+- FORMS / CRUD: every submit/save action writes to the persistence layer; every delete removes from it.
+- TIMERS: use real Timer.publish or async Task.sleep — never a static placeholder.
+
+VISUAL QUALITY (secondary — apply after logic is correct):
 - One entry per requested filename. If a target is a screen/component that should live in a subfolder (e.g. Components/), use that filepath.
 - Place Swift files under ${appTargetName}/ (no "Sources/" prefix — this is a real iOS App target, not an SPM executable).
 - Use ${frameworkName} idioms. SwiftUI: @Observable view models (NOT @ObservableObject), NavigationStack, async/await, modern symbol effects.
@@ -921,7 +933,7 @@ Rules:
 - Add accessibility labels on icon-only buttons; allow Dynamic Type (no \`.fixedSize()\` on body copy); keep tap targets >= 44pt.
 - Add subtle haptics (Haptics.impact / Haptics.success / Haptics.error) on primary interactions when a Haptics helper exists.
 - File header is a one-line comment: \`// AppName/FileName.swift — purpose\`.
-- Files should be 30-120 lines, dense and well-factored. Extract subviews when nesting exceeds 3 levels.
+- Files should be 30-150 lines (engine files may be longer to stay complete). Extract subviews when nesting exceeds 3 levels.
 - Do not include Package.swift, Info.plist, project.yml, README.md, Assets.xcassets, or any Contents.json — those are managed by the build system.
 - Output JSON only.`;
 
@@ -942,7 +954,7 @@ Output JSON now.`;
 
   const completion = await openai.chat.completions.create({
     model: "gpt-5.4",
-    max_completion_tokens: 6000,
+    max_completion_tokens: 12000,
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: userMessage },
@@ -1165,7 +1177,7 @@ async function runPlanningPhase(
 
   sendEvent({ type: "planning", message: "Designing architecture..." });
 
-  const planningSystemPrompt = `You are a senior iOS product designer and architect at a top-tier studio (think Linear, Things, Stripe, Apple Design Award winners). You design apps that look hand-crafted, feel native, and ship to the App Store.
+  const planningSystemPrompt = `You are a senior iOS product designer and architect at a top-tier studio (think Linear, Things, Stripe, Apple Design Award winners). You design apps that look hand-crafted, feel native, and ship to the App Store. Critically, you also think like an engineer: every feature you plan must be fully implementable — not just a screen that looks good, but logic that actually works.
 
 Given an app description, produce a concise architecture plan as a JSON object.
 
@@ -1184,7 +1196,22 @@ Output ONLY a valid JSON object with this exact structure:
   ]
 }
 
-Studio-grade architecture rules — the fileList MUST include all of the following (in addition to screens and models):
+═══ DOMAIN-SPECIFIC ENGINE FILES (mandatory for complex domains) ═══
+
+GAMES (chess, checkers, sudoku, card games, puzzles, any turn-based or real-time game):
+- MUST include a "GameEngine.swift" (or domain-specific name like "ChessEngine.swift") that owns ALL game rules: legal move generation, move validation, win/loss/draw detection, board state, and turn management. This is the most important file in a game app — plan it explicitly with a clear purpose note.
+- MUST include an "AIPlayer.swift" (or "ComputerPlayer.swift") that makes real moves for the opponent. Even a random-legal-move AI is acceptable; a minimax AI is better. The opponent MUST actually respond on every turn.
+- MUST include a "GameViewModel.swift" (or equivalent) that wires the engine to the UI: handles user input, calls engine for legal-move checking, triggers AI moves after the human plays, and drives state updates.
+- Plan models that represent the complete game state (board, piece positions, current turn, captured pieces, move history, game phase: playing/check/checkmate/stalemate/draw).
+
+PRODUCTIVITY / DATA APPS (todo, notes, journal, habit, finance, calendar):
+- MUST include a real persistence layer file (SwiftData @Model or UserDefaults JSON store). Plan it explicitly.
+- MUST include a service/repository file for CRUD operations. Views must never write to storage directly.
+
+REAL-TIME / SENSOR APPS (fitness, location, timer, audio):
+- MUST include a service file that owns the sensor/timer loop using Combine or async streams.
+
+═══ STANDARD STUDIO-GRADE FILES (always required) ═══
 - A design-system file (e.g. "Theme.swift" or "DesignSystem.swift") that defines the app's color palette, typography scale, spacing tokens, corner radii, shadow elevations, and motion curves. Every other view will read from it — no hardcoded colors or font sizes anywhere.
 - A "Haptics.swift" helper that wraps UIImpactFeedbackGenerator / UINotificationFeedbackGenerator for standardized tactile feedback on key interactions.
 - One "ViewModel" file per stateful screen (e.g. "HomeViewModel.swift") using the @Observable macro (iOS 17+). Pure SwiftUI views consume them via @State / @Bindable.
@@ -1194,7 +1221,7 @@ Studio-grade architecture rules — the fileList MUST include all of the followi
 - An onboarding/welcome screen ("OnboardingView.swift") whenever the app benefits from a first-launch introduction (most apps with state do).
 
 Other rules:
-- screens.purpose and fileList.purpose should be specific and visually-grounded ("Hero card with current city, glassy translucent header, hourly scroll strip below" — not "shows weather").
+- screens.purpose and fileList.purpose should be specific and visually-grounded ("Hero card with current city, glassy translucent header, hourly scroll strip below" — not "shows weather"). For engine files, be explicit: "ChessEngine.swift — complete move generation for all piece types, check/checkmate/stalemate detection, en passant, castling, promotion".
 - Aim for 12-18 Swift files total. Fewer than 10 is almost never enough for studio-grade.
 - spmDependencies must be an array of objects. Each object must include ALL of these fields:
     "url": the full GitHub URL of the Swift package (e.g. "https://github.com/Alamofire/Alamofire")
@@ -1215,7 +1242,7 @@ Produce the JSON architecture plan now.`;
 
   const planStream = await openai.chat.completions.create({
     model: "gpt-5.4",
-    max_completion_tokens: 2048,
+    max_completion_tokens: 4096,
     messages: [
       { role: "system", content: planningSystemPrompt },
       { role: "user", content: planningUserMessage },
@@ -1591,6 +1618,23 @@ UX QUALITY (non-negotiable):
 - Accessibility: every Image/Icon-only button has \`.accessibilityLabel\`; decorative images use \`.accessibilityHidden(true)\`; text scales with Dynamic Type (no \`.fixedSize()\` on body copy); tap targets are at least 44pt.
 - Settings screen uses Form with sections, includes Version (\`Bundle.main.infoDictionary\`), and a "Made with promptiOS" footer is fine.
 
+FUNCTIONAL COMPLETENESS (DISQUALIFYING if violated — this is the most important section):
+- Every function, method, and computed property MUST have a real, working implementation. Zero empty bodies. Zero "// TODO:" or "// FIXME:" comments. Zero \`fatalError()\` or \`preconditionFailure()\` stubs. If a method is called, it must do something real.
+- GAME APPS — implement a complete, playable game with full rules:
+  • Legal move generation: EVERY piece type must enforce its own movement rules. A chess bishop can only move diagonally; a rook only in straight lines; a knight in L-shapes. No move should be accepted unless it passes the engine's validation.
+  • Special moves: for chess, implement castling (kingside + queenside), en passant, and pawn promotion. These are not optional — a chess app without them is broken.
+  • Win/loss/draw detection: detect check, checkmate, stalemate, and 50-move rule (or threefold repetition) in the engine. Update game phase accordingly and show the result to the user.
+  • Turn alternation: the game MUST enforce whose turn it is. Human plays white (or chosen color), computer plays the other color. After the human's move is applied, the engine automatically computes and applies the AI's response before returning control to the UI.
+  • AI opponent — the computer MUST make real moves. Implement at minimum:
+    - Generate all legal moves for the AI's side using the same engine that validates human moves.
+    - Pick and apply a move (random legal move is acceptable as a baseline; simple piece-value minimax at depth 2 is better).
+    - NEVER leave the AI's turn unimplemented ("// TODO: AI move") — this makes the game unplayable.
+  • Board state: track piece positions, current turn, move history, captured pieces, en passant target, castling rights.
+- PRODUCTIVITY APPS: every Create/Read/Update/Delete operation must persist to the storage layer immediately. No in-memory-only state for data the user expects to survive app restarts.
+- FORMS: every submit button must read the form fields, validate them (non-empty, format), write to the store, and give feedback (success toast or inline error). No no-op handlers.
+- TIMERS / COUNTDOWNS: use \`Timer.publish\` or \`Task { try await Task.sleep(...) }\` for real elapsed-time tracking — not a static label.
+- SEARCH / FILTER: the filter must actually filter the data array using the search term — not display all items regardless of input.
+
 CODE QUALITY (non-negotiable for SwiftUI):
 - Use the @Observable macro (Observation framework, iOS 17+) for ViewModels — NOT @ObservableObject + @Published. Views own them with \`@State private var viewModel = HomeViewModel()\` and pass children \`@Bindable var viewModel\` when they need to mutate.
 - Prefer \`NavigationStack\` (not the deprecated \`NavigationView\`).
@@ -1600,7 +1644,7 @@ CODE QUALITY (non-negotiable for SwiftUI):
 - Keep view bodies readable: extract subviews when nesting exceeds ~3 levels, and prefer many small views over giant ones.
 
 GENERAL RULES:
-- Generate 12-18 Swift files. Fewer than 10 is disqualifying. Each file should be 30-120 lines, dense and well-factored.
+- Generate 12-18 Swift files. Fewer than 10 is disqualifying. Each file should be 30-150 lines, dense and well-factored. Engine files (game logic, AI) may be longer if needed to be complete — never truncate working logic to hit a line limit.
 - For UIKit: programmatic Auto Layout, no Storyboards. Same design-system + state + accessibility expectations apply (UIColor extensions, UIFont extensions, etc.).
 - If the app uses Camera, Microphone, Location, Contacts, Photos, HealthKit, or any privacy-sensitive API, add a comment at the top of the relevant Swift file: \`// REQUIRES Info.plist key: NSCameraUsageDescription = "<reason>"\` (the user reads README.md for what to add).
 - All filepaths must use the ${appTargetName}/ prefix (e.g. "${appTargetName}/ContentView.swift", "${appTargetName}/Components/PrimaryButton.swift").
