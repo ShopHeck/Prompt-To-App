@@ -56,26 +56,34 @@ const SECTIONS: Section[] = [
   },
   {
     id: "open-project",
-    title: "Open the generated project in Xcode",
+    title: "Generate the Xcode project & open it",
     icon: Layers,
-    intro: "Get the downloaded code building locally before you worry about signing or shipping.",
+    intro: "promptiOS ships an iOS App target as a project.yml spec for XcodeGen. One command turns it into a real .xcodeproj you can open and submit.",
     steps: [
       {
         heading: "Unzip the downloaded archive",
         body: "Use Finder to unzip the .zip you downloaded from promptiOS. Move the folder somewhere stable (Documents/Projects works well) — don't run it from your Downloads folder.",
       },
       {
-        heading: "Open Package.swift or the .xcodeproj",
-        body: "Double-click Package.swift (or the project file) to launch Xcode. Wait for Swift Package Manager to resolve dependencies — the activity bar at the top of Xcode shows progress.",
+        heading: "Install XcodeGen (one time)",
+        body: "Open Terminal and run: brew install xcodegen. XcodeGen is the de-facto tool for generating reproducible .xcodeproj files from a YAML spec. It's free, open source, and what most production iOS teams use.",
       },
       {
-        heading: "Pick a simulator and run it",
-        body: "Select an iPhone simulator in the toolbar (e.g. iPhone 15) and press ⌘R. The first build takes a minute. If it runs in the simulator, you're ready for the next step.",
+        heading: "Generate the .xcodeproj",
+        body: "cd into the unzipped folder and run: xcodegen generate. This reads project.yml and produces a real iOS App target in a fresh .xcodeproj. Re-run this command any time you add or remove Swift files.",
+      },
+      {
+        heading: "Open the project & run on a simulator",
+        body: "Double-click the new .xcodeproj to launch Xcode. Pick an iPhone simulator (e.g. iPhone 15) and press ⌘R. The first build takes a minute; subsequent builds are fast.",
       },
     ],
     pitfalls: [
-      "“Failed to resolve package dependencies” usually means no internet, a VPN issue, or a stale Xcode derived data folder. Try Product → Clean Build Folder (⇧⌘K).",
-      "If it builds but crashes on launch, read the Xcode console — almost always a missing Info.plist key or a model decoding error.",
+      "“xcodegen: command not found” — your shell hasn't picked up Homebrew's bin yet. Open a fresh Terminal window or run: eval \"$(/opt/homebrew/bin/brew shellenv)\".",
+      "“Failed to resolve package dependencies” — usually no internet, a VPN issue, or a stale Xcode derived data folder. Try Product → Clean Build Folder (⇧⌘K).",
+      "If it builds but crashes on launch, read the Xcode console — almost always a missing Info.plist privacy key (NSCameraUsageDescription, NSLocationWhenInUseUsageDescription, etc.) or a model decoding error.",
+    ],
+    tips: [
+      "Don't edit the .xcodeproj by hand — it gets regenerated. Make project changes (bundle ID, deployment target, schemes) in project.yml and re-run xcodegen generate.",
     ],
   },
   {
@@ -86,7 +94,7 @@ const SECTIONS: Section[] = [
     steps: [
       {
         heading: "Pick a unique bundle identifier",
-        body: "In the project navigator click the project root → your target → Signing & Capabilities. Set the Bundle Identifier to reverse-DNS like com.yourcompany.appname. It must be unique across the entire App Store.",
+        body: "Open project.yml, find PRODUCT_BUNDLE_IDENTIFIER (defaults to app.<yourapp>.ios) and change it to a reverse-DNS string you own, e.g. com.yourcompany.appname. It must be unique across the entire App Store. Re-run xcodegen generate after editing — or change it directly in Xcode under Target → Signing & Capabilities and the next xcodegen run will preserve it as long as you also update project.yml.",
       },
       {
         heading: "Add your team",
@@ -134,7 +142,7 @@ const SECTIONS: Section[] = [
     ],
     pitfalls: [
       "If Archive is grayed out, you're still on a simulator destination. Switch to Any iOS Device.",
-      "Validation errors about missing icons usually mean Assets.xcassets/AppIcon is incomplete — every required size must be filled.",
+      "“Missing app icon” at validation means you haven't dropped Icon-1024.png into <YourApp>/Assets.xcassets/AppIcon.appiconset/ yet — Xcode 14+ generates all the smaller sizes from that one 1024×1024 PNG.",
     ],
   },
   {
@@ -161,7 +169,7 @@ const SECTIONS: Section[] = [
       },
     ],
     pitfalls: [
-      "“Missing compliance” banner blocking testers — answer the encryption question on the build's TestFlight page.",
+      "“Missing compliance” banner blocking testers — promptiOS sets ITSAppUsesNonExemptEncryption=false in Info.plist by default (correct for HTTPS-only apps). If you add custom crypto, change it to true and answer the encryption questionnaire on the build's TestFlight page.",
       "Forgetting to bump the build number; the upload will be rejected with “Redundant Binary Upload”.",
     ],
   },

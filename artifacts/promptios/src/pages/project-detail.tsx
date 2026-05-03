@@ -858,7 +858,7 @@ export default function ProjectDetail() {
                   <>
                     <h3 className="text-lg font-mono font-bold text-foreground">SYNTHESIZING SOURCE CODE</h3>
                     <p className="text-sm font-mono text-muted-foreground mt-2 max-w-md text-center">
-                      Compiling {project?.framework} views, models, Package.swift, and Info.plist...
+                      Compiling {project?.framework} views, models, project.yml, and Info.plist...
                     </p>
                   </>
                 )}

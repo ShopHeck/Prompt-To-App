@@ -31,8 +31,7 @@ export const seededArchitecturePlan = {
   navigation: "TabView with two tabs",
   spmDependencies: [],
   fileList: [
-    { filename: "Package.swift", purpose: "SPM manifest" },
-    { filename: "Info.plist", purpose: "iOS bundle metadata" },
+    { filename: "Task8E2EApp.swift", purpose: "@main SwiftUI App entry point" },
     { filename: "ContentView.swift", purpose: "Root view" },
   ],
 };
@@ -46,7 +45,7 @@ export const seededAccuracyReport = {
     { type: "screen", name: "SettingsView", status: "missing", confidence: 0.4, notes: "Settings screen referenced in plan but not generated" },
     { type: "model", name: "Note", status: "matched", confidence: 0.95 },
     { type: "model", name: "Tag", status: "off-spec", confidence: 0.6, notes: "Renamed colorHex to color" },
-    { type: "file", name: "Package.swift", status: "matched", confidence: 1.0 },
+    { type: "file", name: "project.yml", status: "matched", confidence: 1.0 },
     { type: "file", name: "Info.plist", status: "matched", confidence: 1.0 },
     { type: "file", name: "ExtraHelpers.swift", status: "extra", confidence: 0.7, notes: "Not in plan; appears to be a utility helper" },
   ],
@@ -63,24 +62,41 @@ export const seededRepairHistory = [
 
 export const seededFiles = [
   {
-    filename: "Package.swift",
-    filepath: "Package.swift",
+    filename: "project.yml",
+    filepath: "project.yml",
+    language: "yaml",
+    content: `name: Task8E2E
+options:
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  Task8E2E:
+    type: application
+    platform: iOS
+    sources:
+      - path: Task8E2E
+    info:
+      path: Task8E2E/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.task8e2e.ios
+`,
+  },
+  {
+    filename: "Task8E2EApp.swift",
+    filepath: "Task8E2E/Task8E2EApp.swift",
     language: "swift",
-    content: `// swift-tools-version:5.9
-import PackageDescription
+    content: `import SwiftUI
 
-let package = Package(
-  name: "Task8E2E",
-  platforms: [.iOS(.v17)],
-  targets: [
-    .executableTarget(name: "Task8E2E", path: "Sources/Task8E2E"),
-  ]
-)
+@main
+struct Task8E2EApp: App {
+  var body: some Scene { WindowGroup { ContentView() } }
+}
 `,
   },
   {
     filename: "ContentView.swift",
-    filepath: "Sources/Task8E2E/ContentView.swift",
+    filepath: "Task8E2E/ContentView.swift",
     language: "swift",
     content: `import SwiftUI
 
@@ -91,7 +107,7 @@ struct ContentView: View {
   },
   {
     filename: "HomeView.swift",
-    filepath: "Sources/Task8E2E/HomeView.swift",
+    filepath: "Task8E2E/HomeView.swift",
     language: "swift",
     content: `import SwiftUI
 

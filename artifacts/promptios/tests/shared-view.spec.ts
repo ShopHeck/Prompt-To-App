@@ -33,5 +33,5 @@ test("shared read-only view shows clarifications, accuracy report, and files", a
 
   await expect(panel.getByText(/Repair history/i)).toBeVisible();
 
-  await expect(page.getByText("Package.swift").first()).toBeVisible();
+  await expect(page.getByText("project.yml").first()).toBeVisible();
 });
