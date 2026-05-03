@@ -16,6 +16,7 @@ import {
   AnswerClarificationsBody,
 } from "@workspace/api-zod";
 import { openai } from "@workspace/integrations-openai-ai-server";
+import vm from "node:vm";
 
 const router: IRouter = Router();
 
@@ -1017,6 +1018,7 @@ Hard rules:
 - Implement screen switching with plain vanilla JS (no React, no build step). Use a simple state object that toggles which screen <section data-screen="..."> is visible (display:none vs flex).
 - Include the navigation pattern indicated below: ${navStyle}. For tab bar, render at the bottom with icons + labels, exactly 84px tall (includes safe-area inset). For nav stack, show a sticky header with title and an optional chevron-left back button when not on the root screen.
 - Every interactive element (<button>, list rows that navigate, tab items, toggles, links) MUST have a working JS click/tap handler — no dead controls. Tapping a list row navigates if appropriate; toggles flip a boolean and re-render.
+- ALL inline <script> JavaScript MUST parse cleanly — a single syntax error makes EVERY onclick handler dead. Triple-check ternaries: \`cond ? a : b\` has exactly one \`?\` and one \`:\`. Triple-check that every backtick-delimited template literal is opened and closed correctly, and that nested template literals inside \`.map(...)\` calls do not break the outer template's quoting. When in doubt, build a string with concatenation instead of nesting templates.
 - Each screen renders representative content based on its purpose, with realistic mock data (5-10 varied items per list, believable names/dates/copy, NEVER "Item 1, Item 2"). Match modern iOS styling: rounded corners (12-20px), subtle separators (rgba(60,60,67,0.18)), generous spacing (16-24px), accent #007AFF for actions, system grays for secondary text.
 - Typography: body text minimum 15px, navigation/tab labels 11-13px, headlines 20-34px. Multi-word strings MUST wrap naturally — no white-space:nowrap on titles, descriptions, or list rows.
 - Tap targets are at least 44×44px.
@@ -1037,6 +1039,40 @@ ${fileBlock}
 
 Produce the HTML preview now.`;
 
+  const cleanHtml = (raw: string): string | null => {
+    let out = raw.trim();
+    const fenceMatch = out.match(/```(?:html)?\s*([\s\S]*?)```/i);
+    if (fenceMatch) out = fenceMatch[1].trim();
+    const docIdx = out.search(/<!doctype|<html/i);
+    if (docIdx > 0) out = out.slice(docIdx);
+    if (!/<html[\s>]/i.test(out)) return null;
+    return out;
+  };
+
+  // Returns null if all <script> blocks parse cleanly, else { snippet, error }.
+  const findScriptSyntaxError = (html: string): { snippet: string; error: string } | null => {
+    const scriptRe = /<script\b[^>]*>([\s\S]*?)<\/script>/gi;
+    let m: RegExpExecArray | null;
+    while ((m = scriptRe.exec(html)) !== null) {
+      const code = m[1];
+      // Skip CDN script tags (they have a src attribute and empty body).
+      if (!code.trim()) continue;
+      // Skip non-JS scripts (e.g. type="application/json").
+      const tagOpen = m[0].slice(0, m[0].indexOf(">"));
+      if (/type\s*=\s*["'](?!text\/javascript|module|application\/javascript)/i.test(tagOpen)) continue;
+      try {
+        // Wrap in a function to allow `return`-less top-level await-free code with declarations.
+        new vm.Script(code);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // Pull a small snippet of the broken script for the repair prompt.
+        const snippet = code.length > 1200 ? code.slice(0, 1200) + "\n/* ...truncated... */" : code;
+        return { snippet, error: msg };
+      }
+    }
+    return null;
+  };
+
   try {
     const completion = await openai.chat.completions.create({
       model: "gpt-5.4",
@@ -1046,19 +1082,46 @@ Produce the HTML preview now.`;
         { role: "user", content: userMessage },
       ],
     });
-    let raw = completion.choices[0]?.message?.content ?? "";
-    raw = raw.trim();
-    // Strip code fences if AI added them anyway.
-    const fenceMatch = raw.match(/```(?:html)?\s*([\s\S]*?)```/i);
-    if (fenceMatch) raw = fenceMatch[1].trim();
-    // Find the first <!DOCTYPE or <html opening to be safe.
-    const docIdx = raw.search(/<!doctype|<html/i);
-    if (docIdx > 0) raw = raw.slice(docIdx);
-    if (!/<html[\s>]/i.test(raw)) {
+    const raw = completion.choices[0]?.message?.content ?? "";
+    let html = cleanHtml(raw);
+    if (!html) {
       reqLog.error("Live preview AI output missing <html> tag");
       return null;
     }
-    return raw;
+
+    // Validate inline JS — a syntax error makes EVERY onclick handler dead.
+    const jsError = findScriptSyntaxError(html);
+    if (jsError) {
+      reqLog.error({ jsError: jsError.error }, "Live preview JS has syntax error — attempting one-shot repair");
+      const repairCompletion = await openai.chat.completions.create({
+        model: "gpt-5.4",
+        max_completion_tokens: 9000,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userMessage },
+          { role: "assistant", content: html },
+          {
+            role: "user",
+            content: `The inline <script> in your previous HTML has a JavaScript syntax error: ${jsError.error}\n\nBroken script excerpt:\n${jsError.snippet}\n\nThis breaks every onclick handler in the preview because the script fails to parse. Re-output the COMPLETE corrected HTML document (same structure, all screens, same content) with the JavaScript fixed. Output the full HTML only — no commentary, no fences.`,
+          },
+        ],
+      });
+      const repairedRaw = repairCompletion.choices[0]?.message?.content ?? "";
+      const repairedHtml = cleanHtml(repairedRaw);
+      if (repairedHtml) {
+        const stillBroken = findScriptSyntaxError(repairedHtml);
+        if (!stillBroken) {
+          reqLog.info?.("Live preview JS repaired successfully");
+          html = repairedHtml;
+        } else {
+          reqLog.error({ stillBroken: stillBroken.error }, "Live preview JS still broken after repair — keeping original");
+        }
+      } else {
+        reqLog.error("Live preview repair returned no <html> — keeping original");
+      }
+    }
+
+    return html;
   } catch (err) {
     reqLog.error({ err }, "Live preview generation failed");
     return null;
