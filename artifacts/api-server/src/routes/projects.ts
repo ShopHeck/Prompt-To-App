@@ -1127,7 +1127,7 @@ Generate all necessary files including Package.swift and Info.plist for a compil
 
     const stream = await openai.chat.completions.create({
       model: "gpt-5.4",
-      max_completion_tokens: 8192,
+      max_completion_tokens: 32768,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userMessage },
