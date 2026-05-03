@@ -17,6 +17,8 @@ import type {
 } from "@tanstack/react-query";
 
 import type {
+  AnswerClarificationsBody,
+  ApprovePlanBody,
   CreateProjectBody,
   GenerateAppBody,
   HealthStatus,
@@ -703,7 +705,7 @@ export function useGetSharedProject<
 }
 
 /**
- * @summary Generate iOS app code from a prompt (streaming)
+ * @summary Run clarify (if needed) then planning (Phase 1, streaming). Pauses for clarifications or plan approval.
  */
 export const getGenerateAppUrl = (id: number) => {
   return `/api/projects/${id}/generate`;
@@ -767,7 +769,7 @@ export type GenerateAppMutationBody = BodyType<GenerateAppBody>;
 export type GenerateAppMutationError = ErrorType<unknown>;
 
 /**
- * @summary Generate iOS app code from a prompt (streaming)
+ * @summary Run clarify (if needed) then planning (Phase 1, streaming). Pauses for clarifications or plan approval.
  */
 export const useGenerateApp = <
   TError = ErrorType<unknown>,
@@ -787,6 +789,181 @@ export const useGenerateApp = <
   TContext
 > => {
   return useMutation(getGenerateAppMutationOptions(options));
+};
+
+/**
+ * @summary Submit answers to clarifying questions and resume into the planning phase (streaming).
+ */
+export const getAnswerClarificationsUrl = (id: number) => {
+  return `/api/projects/${id}/answer-clarifications`;
+};
+
+export const answerClarifications = async (
+  id: number,
+  answerClarificationsBody: AnswerClarificationsBody,
+  options?: RequestInit,
+): Promise<string> => {
+  return customFetch<string>(getAnswerClarificationsUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(answerClarificationsBody),
+  });
+};
+
+export const getAnswerClarificationsMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof answerClarifications>>,
+    TError,
+    { id: number; data: BodyType<AnswerClarificationsBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof answerClarifications>>,
+  TError,
+  { id: number; data: BodyType<AnswerClarificationsBody> },
+  TContext
+> => {
+  const mutationKey = ["answerClarifications"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof answerClarifications>>,
+    { id: number; data: BodyType<AnswerClarificationsBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return answerClarifications(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AnswerClarificationsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof answerClarifications>>
+>;
+export type AnswerClarificationsMutationBody =
+  BodyType<AnswerClarificationsBody>;
+export type AnswerClarificationsMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Submit answers to clarifying questions and resume into the planning phase (streaming).
+ */
+export const useAnswerClarifications = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof answerClarifications>>,
+    TError,
+    { id: number; data: BodyType<AnswerClarificationsBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof answerClarifications>>,
+  TError,
+  { id: number; data: BodyType<AnswerClarificationsBody> },
+  TContext
+> => {
+  return useMutation(getAnswerClarificationsMutationOptions(options));
+};
+
+/**
+ * @summary Approve plan, run code generation, then accuracy validation + repair (streaming).
+ */
+export const getApprovePlanUrl = (id: number) => {
+  return `/api/projects/${id}/approve-plan`;
+};
+
+export const approvePlan = async (
+  id: number,
+  approvePlanBody: ApprovePlanBody,
+  options?: RequestInit,
+): Promise<string> => {
+  return customFetch<string>(getApprovePlanUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(approvePlanBody),
+  });
+};
+
+export const getApprovePlanMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof approvePlan>>,
+    TError,
+    { id: number; data: BodyType<ApprovePlanBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof approvePlan>>,
+  TError,
+  { id: number; data: BodyType<ApprovePlanBody> },
+  TContext
+> => {
+  const mutationKey = ["approvePlan"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof approvePlan>>,
+    { id: number; data: BodyType<ApprovePlanBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return approvePlan(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ApprovePlanMutationResult = NonNullable<
+  Awaited<ReturnType<typeof approvePlan>>
+>;
+export type ApprovePlanMutationBody = BodyType<ApprovePlanBody>;
+export type ApprovePlanMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Approve plan, run code generation, then accuracy validation + repair (streaming).
+ */
+export const useApprovePlan = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof approvePlan>>,
+    TError,
+    { id: number; data: BodyType<ApprovePlanBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof approvePlan>>,
+  TError,
+  { id: number; data: BodyType<ApprovePlanBody> },
+  TContext
+> => {
+  return useMutation(getApprovePlanMutationOptions(options));
 };
 
 /**

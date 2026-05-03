@@ -13,6 +13,7 @@ export type ProjectStatus = (typeof ProjectStatus)[keyof typeof ProjectStatus];
 
 export const ProjectStatus = {
   pending: "pending",
+  awaiting_clarification: "awaiting_clarification",
   generating: "generating",
   awaiting_approval: "awaiting_approval",
   complete: "complete",
@@ -38,6 +39,16 @@ export interface Project {
   fileCount: number;
   /** @nullable */
   architecturePlan: string | null;
+  /** @nullable */
+  clarifyingQuestions: string | null;
+  /** @nullable */
+  clarifyAnswers: string | null;
+  /** @nullable */
+  enrichedPrompt: string | null;
+  /** @nullable */
+  accuracyReport: string | null;
+  /** @nullable */
+  repairHistory: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -67,6 +78,55 @@ export interface ProjectFile {
 }
 
 export interface GenerateAppBody {
+  /** @nullable */
+  additionalContext?: string | null;
+}
+
+export type ApprovePlanBodyPlanScreensItem = {
+  name: string;
+  purpose: string;
+};
+
+export type ApprovePlanBodyPlanModelsItem = {
+  name: string;
+  fields: string[];
+};
+
+export type ApprovePlanBodyPlanSpmDependenciesItem = {
+  url: string;
+  packageName: string;
+  productNames: string[];
+  version: string;
+};
+
+export type ApprovePlanBodyPlanFileListItem = {
+  filename: string;
+  purpose: string;
+};
+
+export type ApprovePlanBodyPlan = {
+  screens: ApprovePlanBodyPlanScreensItem[];
+  models: ApprovePlanBodyPlanModelsItem[];
+  navigation: string;
+  spmDependencies: ApprovePlanBodyPlanSpmDependenciesItem[];
+  fileList: ApprovePlanBodyPlanFileListItem[];
+};
+
+export interface ApprovePlanBody {
+  plan: ApprovePlanBodyPlan;
+  /** @nullable */
+  additionalContext?: string | null;
+}
+
+export type AnswerClarificationsBodyAnswersItem = {
+  id: string;
+  question: string;
+  answer: string;
+};
+
+export interface AnswerClarificationsBody {
+  skip?: boolean;
+  answers: AnswerClarificationsBodyAnswersItem[];
   /** @nullable */
   additionalContext?: string | null;
 }

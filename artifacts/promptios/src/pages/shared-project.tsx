@@ -16,6 +16,8 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { PlanPanel, type ArchitecturePlan } from "@/components/plan-panel";
+import { ClarifyAnswersDisplay, type ClarifyAnswer } from "@/components/clarify-panel";
+import { AccuracyReportPanel, type AccuracyReport, type RepairHistoryEntry } from "@/components/accuracy-report-panel";
 
 interface ProjectFile {
   id: number;
@@ -37,6 +39,11 @@ interface Project {
   fileCount: number;
   shareToken: string | null;
   architecturePlan: string | null;
+  clarifyingQuestions: string | null;
+  clarifyAnswers: string | null;
+  enrichedPrompt: string | null;
+  accuracyReport: string | null;
+  repairHistory: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -74,6 +81,30 @@ export default function SharedProject() {
     } catch {
       return null;
     }
+  })();
+
+  const parsedAnswers: ClarifyAnswer[] = (() => {
+    if (!project?.clarifyAnswers) return [];
+    try {
+      const parsed = JSON.parse(project.clarifyAnswers);
+      return Array.isArray(parsed) ? (parsed as ClarifyAnswer[]) : [];
+    } catch { return []; }
+  })();
+
+  const parsedAccuracy: AccuracyReport | null = (() => {
+    if (!project?.accuracyReport) return null;
+    try {
+      const parsed = JSON.parse(project.accuracyReport) as AccuracyReport;
+      return parsed && Array.isArray(parsed.items) ? parsed : null;
+    } catch { return null; }
+  })();
+
+  const parsedRepairs: RepairHistoryEntry[] = (() => {
+    if (!project?.repairHistory) return [];
+    try {
+      const parsed = JSON.parse(project.repairHistory);
+      return Array.isArray(parsed) ? (parsed as RepairHistoryEntry[]) : [];
+    } catch { return []; }
   })();
 
   const copyToClipboard = () => {
@@ -154,6 +185,20 @@ export default function SharedProject() {
             {project.prompt}
           </p>
         </div>
+      )}
+
+      {/* Clarifications (read-only) */}
+      {!isLoading && parsedAnswers.length > 0 && (
+        <ClarifyAnswersDisplay answers={parsedAnswers} />
+      )}
+
+      {/* Accuracy Report (read-only) */}
+      {!isLoading && (
+        <AccuracyReportPanel
+          report={parsedAccuracy}
+          history={parsedRepairs}
+          defaultCollapsed
+        />
       )}
 
       {/* Architecture Plan Panel */}

@@ -162,7 +162,7 @@ paths:
     post:
       operationId: generateApp
       tags: [generate]
-      summary: Generate iOS app architecture plan (Phase 1, streaming). Pauses for approval before code generation.
+      summary: Run clarify (if needed) then planning (Phase 1, streaming). Pauses for clarifications or plan approval.
       parameters:
         - name: id
           in: path
@@ -177,7 +177,32 @@ paths:
               $ref: "#/components/schemas/GenerateAppBody"
       responses:
         "200":
-          description: SSE stream — emits planning_chunk, plan, then awaiting_approval
+          description: SSE stream — emits clarify_questions OR planning_chunk/plan/awaiting_approval
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  /projects/{id}/answer-clarifications:
+    post:
+      operationId: answerClarifications
+      tags: [generate]
+      summary: Submit answers to clarifying questions and resume into the planning phase (streaming).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnswerClarificationsBody"
+      responses:
+        "200":
+          description: SSE stream of planning phase using the enriched prompt
           content:
             text/event-stream:
               schema:
@@ -187,7 +212,7 @@ paths:
     post:
       operationId: approvePlan
       tags: [generate]
-      summary: Approve (and optionally edit) the architecture plan, then trigger Phase 2 code generation (streaming)
+      summary: Approve plan, run code generation, then accuracy validation + repair (streaming).
       parameters:
         - name: id
           in: path
@@ -202,7 +227,7 @@ paths:
               $ref: "#/components/schemas/ApprovePlanBody"
       responses:
         "200":
-          description: SSE stream of Phase 2 code generation
+          description: SSE stream of code generation, validation, repair
           content:
             text/event-stream:
               schema:
@@ -259,13 +284,23 @@ components:
           type: ["string", "null"]
         status:
           type: string
-          enum: [pending, generating, awaiting_approval, complete, error]
+          enum: [pending, awaiting_clarification, generating, awaiting_approval, complete, error]
         framework:
           type: string
           enum: [swiftui, uikit]
         fileCount:
           type: integer
         architecturePlan:
+          type: ["string", "null"]
+        clarifyingQuestions:
+          type: ["string", "null"]
+        clarifyAnswers:
+          type: ["string", "null"]
+        enrichedPrompt:
+          type: ["string", "null"]
+        accuracyReport:
+          type: ["string", "null"]
+        repairHistory:
           type: ["string", "null"]
         createdAt:
           type: string
@@ -280,6 +315,11 @@ components:
         - framework
         - fileCount
         - architecturePlan
+        - clarifyingQuestions
+        - clarifyAnswers
+        - enrichedPrompt
+        - accuracyReport
+        - repairHistory
         - createdAt
         - updatedAt
 
@@ -330,6 +370,93 @@ components:
         additionalContext:
           type: ["string", "null"]
       required: []
+
+    ApprovePlanBody:
+      type: object
+      properties:
+        plan:
+          type: object
+          properties:
+            screens:
+              type: array
+              items:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  purpose:
+                    type: string
+                required: [name, purpose]
+            models:
+              type: array
+              items:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  fields:
+                    type: array
+                    items:
+                      type: string
+                required: [name, fields]
+            navigation:
+              type: string
+            spmDependencies:
+              type: array
+              items:
+                type: object
+                properties:
+                  url:
+                    type: string
+                  packageName:
+                    type: string
+                  productNames:
+                    type: array
+                    items:
+                      type: string
+                  version:
+                    type: string
+                required: [url, packageName, productNames, version]
+            fileList:
+              type: array
+              items:
+                type: object
+                properties:
+                  filename:
+                    type: string
+                  purpose:
+                    type: string
+                required: [filename, purpose]
+          required: [screens, models, navigation, spmDependencies, fileList]
+        additionalContext:
+          type: ["string", "null"]
+      required:
+        - plan
+
+    AnswerClarificationsBody:
+      type: object
+      properties:
+        skip:
+          type: boolean
+        answers:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              question:
+                type: string
+              answer:
+                type: string
+            required:
+              - id
+              - question
+              - answer
+        additionalContext:
+          type: ["string", "null"]
+      required:
+        - answers
 
     ProjectStats:
       type: object

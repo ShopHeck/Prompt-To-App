@@ -12,6 +12,11 @@ export const projectsTable = pgTable("projects", {
   fileCount: integer("file_count").notNull().default(0),
   shareToken: text("share_token").unique(),
   architecturePlan: text("architecture_plan"),
+  clarifyingQuestions: text("clarifying_questions"),
+  clarifyAnswers: text("clarify_answers"),
+  enrichedPrompt: text("enriched_prompt"),
+  accuracyReport: text("accuracy_report"),
+  repairHistory: text("repair_history"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });

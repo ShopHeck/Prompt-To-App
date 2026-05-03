@@ -12,6 +12,8 @@ import {
   GenerateAppBody,
   ApprovePlanParams,
   ApprovePlanBody,
+  AnswerClarificationsParams,
+  AnswerClarificationsBody,
 } from "@workspace/api-zod";
 import { openai } from "@workspace/integrations-openai-ai-server";
 
@@ -414,52 +416,336 @@ function normalizeSwiftPackage(
   ];
 }
 
-// POST /projects/:id/generate  (SSE streaming — two-phase: plan then build)
-router.post("/projects/:id/generate", async (req, res) => {
-  const { id } = GenerateAppParams.parse(req.params);
-  const body = GenerateAppBody.safeParse(req.body);
-  const additionalContext = body.success ? body.data.additionalContext : null;
+// ── Accuracy validation + repair helpers ──────────────────────────────────
+type ItemStatus = "matched" | "missing" | "off-spec" | "extra";
+interface AccuracyItem {
+  type: "screen" | "model" | "file";
+  name: string;
+  status: ItemStatus;
+  confidence: number;
+  notes?: string;
+}
+interface AccuracyReport {
+  overallScore: number;
+  summary: string;
+  items: AccuracyItem[];
+}
 
-  // Set SSE headers
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.flushHeaders();
+function defaultAccuracyReport(plan: ArchitecturePlan, files: Array<{ filename: string; filepath: string }>): AccuracyReport {
+  const items: AccuracyItem[] = [];
+  const filenamesLower = new Set(files.map(f => f.filename.toLowerCase()));
+  const swiftFiles = files.filter(f => f.filename.endsWith(".swift") && f.filename !== "Package.swift");
+  const swiftBasesLower = new Set(swiftFiles.map(f => f.filename.replace(/\.swift$/i, "").toLowerCase()));
 
-  const sendEvent = (data: object) => {
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  for (const s of plan.screens) {
+    const matched = swiftBasesLower.has(s.name.toLowerCase()) || swiftBasesLower.has(`${s.name.toLowerCase()}view`);
+    items.push({ type: "screen", name: s.name, status: matched ? "matched" : "missing", confidence: matched ? 0.9 : 0.5 });
+  }
+  for (const m of plan.models) {
+    const matched = swiftBasesLower.has(m.name.toLowerCase());
+    items.push({ type: "model", name: m.name, status: matched ? "matched" : "missing", confidence: matched ? 0.9 : 0.5 });
+  }
+  for (const f of plan.fileList) {
+    const matched = filenamesLower.has(f.filename.toLowerCase());
+    items.push({ type: "file", name: f.filename, status: matched ? "matched" : "missing", confidence: matched ? 0.95 : 0.6 });
+  }
+  const total = items.length || 1;
+  const matchedCount = items.filter(i => i.status === "matched").length;
+  return {
+    overallScore: Math.round((matchedCount / total) * 100),
+    summary: `${matchedCount} of ${total} planned items present in generated output (heuristic).`,
+    items,
   };
+}
+
+async function runAccuracyValidation(
+  reqLog: import("pino").Logger | { error: (...args: unknown[]) => void },
+  enrichedPrompt: string,
+  plan: ArchitecturePlan,
+  files: Array<{ filename: string; filepath: string; content: string }>,
+): Promise<AccuracyReport> {
+  const fileSummary = files
+    .map(f => {
+      const preview = f.content.slice(0, 240).replace(/\s+/g, " ");
+      return `- ${f.filepath} :: ${preview}${f.content.length > 240 ? "..." : ""}`;
+    })
+    .join("\n");
+
+  const systemPrompt = `You are a strict QA reviewer. Compare a generated iOS project to its original prompt and approved architecture plan, and produce a structured accuracy report.
+
+Output ONLY JSON of this shape:
+{
+  "overallScore": 0-100,
+  "summary": "one-sentence assessment",
+  "items": [
+    { "type": "screen" | "model" | "file", "name": "Name", "status": "matched" | "missing" | "off-spec" | "extra", "confidence": 0..1, "notes": "optional short note" }
+  ]
+}
+
+Rules:
+- Include one item for every planned screen, every planned model, and every planned file.
+- "matched": present in output and serves the planned purpose.
+- "missing": planned but not in the output.
+- "off-spec": present but clearly wrong purpose, empty stub, or trivially broken.
+- "extra": for output items NOT in the plan that look unrelated. Only flag if clearly off-topic; small helpers are fine.
+- overallScore reflects how well the build matches the prompt + plan.
+- Keep notes very short (<= 12 words).
+- Output JSON only. No markdown.`;
+
+  const userMessage = `Original prompt:
+${enrichedPrompt}
+
+Approved plan:
+- screens: ${plan.screens.map(s => `${s.name} (${s.purpose})`).join("; ")}
+- models: ${plan.models.map(m => m.name).join(", ")}
+- navigation: ${plan.navigation}
+- fileList: ${plan.fileList.map(f => f.filename).join(", ")}
+
+Generated files (path :: short preview):
+${fileSummary}
+
+Produce the JSON report now.`;
 
   try {
-    // Fetch the project
-    const [project] = await db
-      .select()
-      .from(projectsTable)
-      .where(eq(projectsTable.id, id));
+    const completion = await openai.chat.completions.create({
+      model: "gpt-5.3-codex",
+      max_completion_tokens: 1800,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMessage },
+      ],
+    });
+    const raw = completion.choices[0]?.message?.content ?? "";
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error("No JSON in validation response");
+    const parsed = JSON.parse(match[0]) as AccuracyReport;
+    if (!Array.isArray(parsed.items)) throw new Error("Missing items array");
+    const score = typeof parsed.overallScore === "number" ? Math.max(0, Math.min(100, Math.round(parsed.overallScore))) : 0;
+    return {
+      overallScore: score,
+      summary: typeof parsed.summary === "string" ? parsed.summary : "",
+      items: parsed.items
+        .filter(i => i && typeof i.name === "string" && typeof i.type === "string")
+        .map(i => ({
+          type: (["screen", "model", "file"].includes(i.type) ? i.type : "file") as AccuracyItem["type"],
+          name: i.name,
+          status: (["matched", "missing", "off-spec", "extra"].includes(i.status) ? i.status : "missing") as ItemStatus,
+          confidence: typeof i.confidence === "number" ? Math.max(0, Math.min(1, i.confidence)) : 0.5,
+          notes: typeof i.notes === "string" ? i.notes : undefined,
+        })),
+    };
+  } catch (validateErr) {
+    reqLog.error({ validateErr }, "AI validation failed; falling back to heuristic accuracy report");
+    return defaultAccuracyReport(plan, files);
+  }
+}
 
-    if (!project) {
-      sendEvent({ error: "Project not found" });
-      res.end();
-      return;
+function collectRepairTargets(report: AccuracyReport): string[] {
+  const targets = new Set<string>();
+  for (const item of report.items) {
+    if (item.type !== "file") continue;
+    if (item.status === "missing" || item.status === "off-spec") {
+      targets.add(item.name);
     }
+  }
+  // Also derive file targets from missing screens/models by convention.
+  for (const item of report.items) {
+    if ((item.type === "screen" || item.type === "model") && item.status === "missing") {
+      targets.add(`${item.name}.swift`);
+    }
+  }
+  return Array.from(targets).slice(0, 6);
+}
 
-    // Mark as generating
-    await db
-      .update(projectsTable)
-      .set({ status: "generating" })
-      .where(eq(projectsTable.id, id));
+async function runRepairPass(
+  reqLog: import("pino").Logger | { error: (...args: unknown[]) => void; info?: (...args: unknown[]) => void },
+  appTargetName: string,
+  frameworkName: string,
+  enrichedPrompt: string,
+  plan: ArchitecturePlan,
+  existingFiles: Array<{ filename: string; filepath: string; content: string; language: string }>,
+  targets: string[],
+): Promise<Array<{ filename: string; filepath: string; content: string; language: string }>> {
+  const existingSummary = existingFiles
+    .map(f => `- ${f.filepath}`)
+    .join("\n");
 
-    sendEvent({ type: "status", status: "generating" });
+  const systemPrompt = `You are an expert iOS developer doing a targeted repair pass. Regenerate ONLY the files listed below to match the prompt + approved plan. Do not touch other files.
 
-    const frameworkName = project.framework === "swiftui" ? "SwiftUI" : "UIKit";
-    const contextBlock = additionalContext
-      ? `\nAdditional context from the user: ${additionalContext}`
-      : "";
+Output ONLY JSON of this shape:
+{
+  "files": [
+    { "filename": "Name.swift", "filepath": "Sources/${appTargetName}/Name.swift", "content": "import SwiftUI\\n...", "language": "swift" }
+  ]
+}
 
-    // ── PHASE 1: Architecture Planning ──────────────────────────────────────
-    sendEvent({ type: "planning", message: "Designing architecture..." });
+Rules:
+- One entry per requested filename.
+- Place Swift files under Sources/${appTargetName}/.
+- Use ${frameworkName} idioms.
+- Keep code production-quality and self-contained.
+- Do not include Package.swift or Info.plist.
+- Output JSON only.`;
 
-    const planningSystemPrompt = `You are a senior iOS architect. Given an app description, produce a concise architecture plan as a JSON object.
+  const userMessage = `Prompt: ${enrichedPrompt}
+
+Plan summary:
+- screens: ${plan.screens.map(s => `${s.name} (${s.purpose})`).join("; ")}
+- models: ${plan.models.map(m => m.name).join(", ")}
+- navigation: ${plan.navigation}
+
+Existing files in project:
+${existingSummary}
+
+Repair these specific files (regenerate or create from scratch):
+${targets.map(t => `- ${t}`).join("\n")}
+
+Output JSON now.`;
+
+  const completion = await openai.chat.completions.create({
+    model: "gpt-5.3-codex",
+    max_completion_tokens: 4000,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userMessage },
+    ],
+  });
+  const raw = completion.choices[0]?.message?.content ?? "";
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) {
+    reqLog.error("Repair pass returned no JSON");
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(match[0]) as { files?: Array<{ filename: string; filepath: string; content: string; language?: string }> };
+    if (!parsed.files || !Array.isArray(parsed.files)) return [];
+    return parsed.files
+      .filter(f => f && typeof f.filename === "string" && typeof f.content === "string")
+      .map(f => ({
+        filename: f.filename,
+        filepath: typeof f.filepath === "string" && f.filepath.length > 0 ? f.filepath : `Sources/${appTargetName}/${f.filename}`,
+        content: f.content,
+        language: f.language ?? "swift",
+      }));
+  } catch (repairParseErr) {
+    reqLog.error({ repairParseErr }, "Failed to parse repair JSON");
+    return [];
+  }
+}
+
+function mergeFiles(
+  base: Array<{ filename: string; filepath: string; content: string; language: string; projectId?: number }>,
+  patches: Array<{ filename: string; filepath: string; content: string; language: string }>,
+): Array<{ filename: string; filepath: string; content: string; language: string }> {
+  const byFilename = new Map<string, { filename: string; filepath: string; content: string; language: string }>();
+  for (const f of base) {
+    byFilename.set(f.filename.toLowerCase(), { filename: f.filename, filepath: f.filepath, content: f.content, language: f.language });
+  }
+  for (const p of patches) {
+    byFilename.set(p.filename.toLowerCase(), p);
+  }
+  return Array.from(byFilename.values());
+}
+
+// ── Shared clarification + planning helpers ────────────────────────────────
+interface ClarifyingQuestion {
+  id: string;
+  question: string;
+  suggestion?: string;
+}
+
+async function detectAmbiguityAndAskQuestions(
+  prompt: string,
+  frameworkName: string,
+): Promise<{ needsClarification: boolean; questions: ClarifyingQuestion[] }> {
+  const systemPrompt = `You are an iOS product manager who decides whether a user's app idea is clear enough to plan, or whether it needs 3-5 quick clarifying questions first.
+
+Return ONLY a JSON object of this exact shape:
+{
+  "needsClarification": true | false,
+  "questions": [
+    { "id": "kebab-case-key", "question": "Single concise question.", "suggestion": "A short suggested default answer (optional)." }
+  ]
+}
+
+Decision rules:
+- If the prompt names a concrete domain, key entities, and at least a hint of features (e.g. "a habit tracker with daily streaks and reminders"), set needsClarification to false and return [] for questions.
+- If the prompt is vague or one-liner ("make me a fitness app", "a notes app"), set needsClarification to true and return 3-5 high-leverage questions covering: target audience, must-have features, data persistence (local/cloud/none), auth (yes/no), and any unique differentiator.
+- Each question must be answerable in one short sentence.
+- Provide a "suggestion" for each question when a reasonable default exists.
+- Do not ask about visual design / colors. Focus on functional scope.
+- Output ONLY the JSON object, no markdown, no extra text.`;
+
+  const userMessage = `Framework: ${frameworkName}
+User prompt: ${prompt}
+
+Decide.`;
+
+  const completion = await openai.chat.completions.create({
+    model: "gpt-5.3-codex",
+    max_completion_tokens: 800,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userMessage },
+    ],
+  });
+
+  const raw = completion.choices[0]?.message?.content ?? "";
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) {
+    return { needsClarification: false, questions: [] };
+  }
+  try {
+    const parsed = JSON.parse(match[0]) as {
+      needsClarification?: boolean;
+      questions?: ClarifyingQuestion[];
+    };
+    const questions = Array.isArray(parsed.questions)
+      ? parsed.questions
+          .filter(q => q && typeof q.id === "string" && typeof q.question === "string")
+          .slice(0, 5)
+          .map(q => ({
+            id: q.id,
+            question: q.question,
+            suggestion: typeof q.suggestion === "string" ? q.suggestion : undefined,
+          }))
+      : [];
+    const needs = parsed.needsClarification === true && questions.length > 0;
+    return { needsClarification: needs, questions: needs ? questions : [] };
+  } catch {
+    return { needsClarification: false, questions: [] };
+  }
+}
+
+function buildEnrichedPrompt(
+  originalPrompt: string,
+  answers: Array<{ id: string; question: string; answer: string }>,
+): string {
+  if (answers.length === 0) return originalPrompt;
+  const lines = answers
+    .filter(a => a.answer && a.answer.trim().length > 0)
+    .map(a => `- ${a.question} → ${a.answer.trim()}`);
+  if (lines.length === 0) return originalPrompt;
+  return `${originalPrompt}\n\nClarifications from the user:\n${lines.join("\n")}`;
+}
+
+async function runPlanningPhase(
+  res: import("express").Response,
+  sendEvent: (data: object) => void,
+  reqLog: { error: (...args: unknown[]) => void },
+  projectId: number,
+  promptForPlanning: string,
+  projectName: string,
+  frameworkName: string,
+  additionalContext: string | null,
+): Promise<void> {
+  const contextBlock = additionalContext
+    ? `\nAdditional context from the user: ${additionalContext}`
+    : "";
+
+  sendEvent({ type: "planning", message: "Designing architecture..." });
+
+  const planningSystemPrompt = `You are a senior iOS architect. Given an app description, produce a concise architecture plan as a JSON object.
 
 Output ONLY a valid JSON object with this exact structure:
 {
@@ -486,71 +772,150 @@ Rules:
 - fileList must include Package.swift, Info.plist, and all Swift source files
 - Do not add markdown or any text outside the JSON object`;
 
-    const planningUserMessage = `Plan the architecture for this iOS ${frameworkName} app:
+  const planningUserMessage = `Plan the architecture for this iOS ${frameworkName} app:
 
-App name: ${project.name}
-Description: ${project.prompt}${contextBlock}
+App name: ${projectName}
+Description: ${promptForPlanning}${contextBlock}
 
 Produce the JSON architecture plan now.`;
 
-    const planStream = await openai.chat.completions.create({
-      model: "gpt-5.3-codex",
-      max_completion_tokens: 2048,
-      messages: [
-        { role: "system", content: planningSystemPrompt },
-        { role: "user", content: planningUserMessage },
-      ],
-      stream: true,
-    });
+  const planStream = await openai.chat.completions.create({
+    model: "gpt-5.3-codex",
+    max_completion_tokens: 2048,
+    messages: [
+      { role: "system", content: planningSystemPrompt },
+      { role: "user", content: planningUserMessage },
+    ],
+    stream: true,
+  });
 
-    let planRaw = "";
-    for await (const chunk of planStream) {
-      const content = chunk.choices[0]?.delta?.content;
-      if (content) {
-        planRaw += content;
-        sendEvent({ type: "planning_chunk", chunk: content });
-      }
+  let planRaw = "";
+  for await (const chunk of planStream) {
+    const content = chunk.choices[0]?.delta?.content;
+    if (content) {
+      planRaw += content;
+      sendEvent({ type: "planning_chunk", chunk: content });
     }
+  }
 
-    // Parse the plan — required for the two-phase contract; fail fast if unparseable
-    let architecturePlan: ArchitecturePlan;
-    try {
-      const jsonMatch = planRaw.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error("No JSON object found in planning response");
-      const candidate = JSON.parse(jsonMatch[0]) as ArchitecturePlan;
-      if (!Array.isArray(candidate.screens) || !Array.isArray(candidate.models)) {
-        throw new Error("Plan JSON missing required screens/models arrays");
-      }
-      // Default any optional fields that downstream code depends on
-      architecturePlan = {
-        screens: candidate.screens,
-        models: candidate.models,
-        navigation: typeof candidate.navigation === "string" ? candidate.navigation : "",
-        spmDependencies: Array.isArray(candidate.spmDependencies) ? candidate.spmDependencies : [],
-        fileList: Array.isArray(candidate.fileList) ? candidate.fileList : [],
-      };
-    } catch (planParseErr) {
-      req.log.error({ planParseErr }, "Failed to parse architecture plan — aborting generation");
-      await db
-        .update(projectsTable)
-        .set({ status: "error" })
-        .where(eq(projectsTable.id, id));
-      sendEvent({ type: "error", message: "Architecture planning failed — could not parse plan. Please try again." });
+  let architecturePlan: ArchitecturePlan;
+  try {
+    const jsonMatch = planRaw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error("No JSON object found in planning response");
+    const candidate = JSON.parse(jsonMatch[0]) as ArchitecturePlan;
+    if (!Array.isArray(candidate.screens) || !Array.isArray(candidate.models)) {
+      throw new Error("Plan JSON missing required screens/models arrays");
+    }
+    architecturePlan = {
+      screens: candidate.screens,
+      models: candidate.models,
+      navigation: typeof candidate.navigation === "string" ? candidate.navigation : "",
+      spmDependencies: Array.isArray(candidate.spmDependencies) ? candidate.spmDependencies : [],
+      fileList: Array.isArray(candidate.fileList) ? candidate.fileList : [],
+    };
+  } catch (planParseErr) {
+    reqLog.error({ planParseErr }, "Failed to parse architecture plan — aborting generation");
+    await db
+      .update(projectsTable)
+      .set({ status: "error" })
+      .where(eq(projectsTable.id, projectId));
+    sendEvent({ type: "error", message: "Architecture planning failed — could not parse plan. Please try again." });
+    res.end();
+    return;
+  }
+
+  const planJson = JSON.stringify(architecturePlan);
+  await db
+    .update(projectsTable)
+    .set({ architecturePlan: planJson, status: "awaiting_approval" })
+    .where(eq(projectsTable.id, projectId));
+  sendEvent({ type: "plan", plan: architecturePlan });
+  sendEvent({ type: "awaiting_approval", plan: architecturePlan });
+  res.end();
+}
+
+// POST /projects/:id/generate  (SSE streaming — clarify (if needed) → plan)
+router.post("/projects/:id/generate", async (req, res) => {
+  const { id } = GenerateAppParams.parse(req.params);
+  const body = GenerateAppBody.safeParse(req.body);
+  const additionalContext = body.success ? body.data.additionalContext ?? null : null;
+
+  // Set SSE headers
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  const sendEvent = (data: object) => {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  try {
+    const [project] = await db
+      .select()
+      .from(projectsTable)
+      .where(eq(projectsTable.id, id));
+
+    if (!project) {
+      sendEvent({ error: "Project not found" });
       res.end();
       return;
     }
 
-    // Persist and emit the plan
-    const planJson = JSON.stringify(architecturePlan);
+    const frameworkName = project.framework === "swiftui" ? "SwiftUI" : "UIKit";
+
+    // Mark as generating
     await db
       .update(projectsTable)
-      .set({ architecturePlan: planJson, status: "awaiting_approval" })
+      .set({ status: "generating" })
       .where(eq(projectsTable.id, id));
-    sendEvent({ type: "plan", plan: architecturePlan });
+    sendEvent({ type: "status", status: "generating" });
 
-    // ── PAUSE: Awaiting user approval before Phase 2 ─────────────────────────
-    sendEvent({ type: "awaiting_approval", plan: architecturePlan });
-    res.end();
+    // ── PHASE 0: Clarification check ───────────────────────────────────────
+    sendEvent({ type: "clarify_check", message: "Checking prompt for ambiguity..." });
+    let clarify: { needsClarification: boolean; questions: ClarifyingQuestion[] };
+    try {
+      clarify = await detectAmbiguityAndAskQuestions(project.prompt, frameworkName);
+    } catch (clarifyErr) {
+      req.log.error({ clarifyErr }, "Clarify-phase failed; proceeding directly to planning");
+      clarify = { needsClarification: false, questions: [] };
+    }
+
+    if (clarify.needsClarification) {
+      await db
+        .update(projectsTable)
+        .set({
+          status: "awaiting_clarification",
+          clarifyingQuestions: JSON.stringify(clarify.questions),
+        })
+        .where(eq(projectsTable.id, id));
+      sendEvent({ type: "clarify_questions", questions: clarify.questions });
+      sendEvent({ type: "awaiting_clarification", questions: clarify.questions });
+      res.end();
+      return;
+    }
+
+    // No clarification needed — store enrichedPrompt = prompt and run planning.
+    await db
+      .update(projectsTable)
+      .set({
+        clarifyingQuestions: JSON.stringify([]),
+        clarifyAnswers: JSON.stringify([]),
+        enrichedPrompt: project.prompt,
+      })
+      .where(eq(projectsTable.id, id));
+
+    await runPlanningPhase(
+      res,
+      sendEvent,
+      req.log,
+      id,
+      project.prompt,
+      project.name,
+      frameworkName,
+      additionalContext,
+    );
+    return;
   } catch (err) {
     req.log.error({ err }, "Generation failed");
     try {
@@ -560,6 +925,81 @@ Produce the JSON architecture plan now.`;
         .where(eq(projectsTable.id, id));
     } catch (_) {}
     sendEvent({ type: "error", message: "Generation failed" });
+    res.end();
+  }
+});
+
+// POST /projects/:id/answer-clarifications  (SSE streaming — resume into planning)
+router.post("/projects/:id/answer-clarifications", async (req, res) => {
+  const { id } = AnswerClarificationsParams.parse(req.params);
+  const body = AnswerClarificationsBody.safeParse(req.body);
+
+  if (!body.success) {
+    res.status(400).json({ error: "Invalid request body", details: body.error.issues });
+    return;
+  }
+
+  const { answers, additionalContext, skip } = body.data;
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  const sendEvent = (data: object) => {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  try {
+    const [project] = await db
+      .select()
+      .from(projectsTable)
+      .where(eq(projectsTable.id, id));
+
+    if (!project) {
+      sendEvent({ type: "error", message: "Project not found" });
+      res.end();
+      return;
+    }
+
+    const frameworkName = project.framework === "swiftui" ? "SwiftUI" : "UIKit";
+    const cleanedAnswers = (answers ?? []).map(a => ({
+      id: a.id,
+      question: a.question,
+      answer: skip ? "" : a.answer,
+    }));
+    const enriched = buildEnrichedPrompt(project.prompt, cleanedAnswers);
+
+    await db
+      .update(projectsTable)
+      .set({
+        clarifyAnswers: JSON.stringify(cleanedAnswers),
+        enrichedPrompt: enriched,
+        status: "generating",
+      })
+      .where(eq(projectsTable.id, id));
+
+    sendEvent({ type: "clarify_resumed", enrichedPrompt: enriched, answers: cleanedAnswers });
+
+    await runPlanningPhase(
+      res,
+      sendEvent,
+      req.log,
+      id,
+      enriched,
+      project.name,
+      frameworkName,
+      additionalContext ?? null,
+    );
+  } catch (err) {
+    req.log.error({ err }, "Answer-clarifications phase failed");
+    try {
+      await db
+        .update(projectsTable)
+        .set({ status: "error" })
+        .where(eq(projectsTable.id, id));
+    } catch (_) {}
+    sendEvent({ type: "error", message: "Failed to resume after clarifications" });
     res.end();
   }
 });
@@ -678,7 +1118,7 @@ Requirements:
 - Include a README.md with Xcode open instructions (open Package.swift in Xcode, select the ${appTargetName} scheme, hit Run)
 - All filepaths must be correct relative paths (Package.swift at root, Swift files under Sources/${appTargetName}/)`;
 
-    const userMessage = `Create a complete iOS ${frameworkName} app for: ${project.prompt}${contextBlock}
+    const userMessage = `Create a complete iOS ${frameworkName} app for: ${project.enrichedPrompt ?? project.prompt}${contextBlock}
 
 App name: ${project.name}
 Target name: ${appTargetName}
@@ -760,18 +1200,100 @@ Generate all necessary files including Package.swift and Info.plist for a compil
 
     await db
       .update(projectsTable)
+      .set({ fileCount: filesToInsert.length })
+      .where(eq(projectsTable.id, id));
+
+    // ── Validation pass ─────────────────────────────────────────────────────
+    sendEvent({ type: "validating", message: "Checking output against the plan..." });
+    const promptForValidation = project.enrichedPrompt ?? project.prompt;
+    let finalFileCount = filesToInsert.length;
+    let report = await runAccuracyValidation(
+      req.log,
+      promptForValidation,
+      approvedPlan,
+      filesToInsert.map(f => ({ filename: f.filename, filepath: f.filepath, content: f.content })),
+    );
+    sendEvent({ type: "accuracy_report", report });
+
+    const repairHistory: Array<{ at: string; targets: string[]; before: AccuracyReport; after: AccuracyReport }> = [];
+
+    // ── Single repair pass if issues found ──────────────────────────────────
+    const repairTargets = collectRepairTargets(report);
+    if (repairTargets.length > 0) {
+      sendEvent({ type: "repairing", message: "Regenerating off-spec or missing files...", targets: repairTargets });
+      try {
+        const repaired = await runRepairPass(
+          req.log,
+          appTargetName,
+          frameworkName,
+          promptForValidation,
+          approvedPlan,
+          filesToInsert.map(f => ({ filename: f.filename, filepath: f.filepath, content: f.content, language: f.language })),
+          repairTargets,
+        );
+        if (repaired.length > 0) {
+          // Replace and re-normalize
+          const merged = mergeFiles(filesToInsert, repaired);
+          const renormalized = normalizeSwiftPackage(
+            merged.map(f => ({ filename: f.filename, filepath: f.filepath, content: f.content, language: f.language })),
+            appTargetName,
+            project.name,
+            validDeps,
+          );
+          await db.delete(projectFilesTable).where(eq(projectFilesTable.projectId, id));
+          const newRows = renormalized.map(f => ({
+            projectId: id,
+            filename: f.filename,
+            filepath: f.filepath,
+            content: f.content,
+            language: f.language || "swift",
+          }));
+          if (newRows.length > 0) {
+            await db.insert(projectFilesTable).values(newRows);
+          }
+          // Re-run validation
+          const before = report;
+          report = await runAccuracyValidation(
+            req.log,
+            promptForValidation,
+            approvedPlan,
+            newRows.map(f => ({ filename: f.filename, filepath: f.filepath, content: f.content })),
+          );
+          repairHistory.push({
+            at: new Date().toISOString(),
+            targets: repairTargets,
+            before,
+            after: report,
+          });
+          sendEvent({ type: "repair_complete", report, history: repairHistory });
+          finalFileCount = newRows.length;
+          await db
+            .update(projectsTable)
+            .set({ fileCount: newRows.length })
+            .where(eq(projectsTable.id, id));
+        }
+      } catch (repairErr) {
+        req.log.error({ repairErr }, "Repair pass failed; continuing with original output");
+      }
+    }
+
+    await db
+      .update(projectsTable)
       .set({
         status: "complete",
-        fileCount: filesToInsert.length,
         description: parsed.description ?? null,
+        accuracyReport: JSON.stringify(report),
+        repairHistory: JSON.stringify(repairHistory),
       })
       .where(eq(projectsTable.id, id));
 
     sendEvent({
       type: "complete",
       done: true,
-      fileCount: filesToInsert.length,
+      fileCount: finalFileCount,
       description: parsed.description,
+      accuracyReport: report,
+      repairHistory,
     });
     res.end();
   } catch (err) {

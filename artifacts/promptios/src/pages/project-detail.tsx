@@ -18,6 +18,8 @@ import { useToast } from "@/hooks/use-toast";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { PlanPanel, parsePartialPlan, type ArchitecturePlan, type PartialPlan } from "@/components/plan-panel";
+import { ClarifyPanel, ClarifyAnswersDisplay, type ClarifyingQuestion, type ClarifyAnswer } from "@/components/clarify-panel";
+import { AccuracyReportPanel, type AccuracyReport, type RepairHistoryEntry } from "@/components/accuracy-report-panel";
 
 export default function ProjectDetail() {
   const [, params] = useRoute("/projects/:id");
@@ -30,12 +32,18 @@ export default function ProjectDetail() {
   const hasTriggeredInitialGeneration = useRef(false);
 
   // Two-phase generation state
-  const [generationPhase, setGenerationPhase] = useState<"idle" | "planning" | "awaiting_approval" | "building">("idle");
+  const [generationPhase, setGenerationPhase] = useState<"idle" | "planning" | "clarifying" | "awaiting_approval" | "building" | "validating">("idle");
   const [planAccumulatedChunks, setPlanAccumulatedChunks] = useState("");
   const [partialPlan, setPartialPlan] = useState<PartialPlan>({ screens: [], models: [], navigation: "" });
   const [livePlan, setLivePlan] = useState<ArchitecturePlan | null>(null);
   const [editedPlan, setEditedPlan] = useState<ArchitecturePlan | null>(null);
   const [planPanelCollapsed, setPlanPanelCollapsed] = useState(false);
+
+  // Clarify + accuracy state
+  const [clarifyingQuestions, setClarifyingQuestions] = useState<ClarifyingQuestion[]>([]);
+  const [submittedAnswers, setSubmittedAnswers] = useState<ClarifyAnswer[]>([]);
+  const [accuracyReport, setAccuracyReport] = useState<AccuracyReport | null>(null);
+  const [repairHistory, setRepairHistory] = useState<RepairHistoryEntry[]>([]);
 
   const { data: project, isLoading: isLoadingProject, error: projectError } = useGetProject(projectId, {
     query: {
@@ -83,6 +91,10 @@ export default function ProjectDetail() {
     setLivePlan(null);
     setEditedPlan(null);
     setPlanPanelCollapsed(false);
+    setClarifyingQuestions([]);
+    setSubmittedAnswers([]);
+    setAccuracyReport(null);
+    setRepairHistory([]);
     hasTriggeredInitialGeneration.current = true;
     
     queryClient.setQueryData(getGetProjectQueryKey(projectId), (old: any) => 
@@ -99,7 +111,14 @@ export default function ProjectDetail() {
       if (!response.ok) throw new Error("Generation request failed");
 
       await consumeSseStream(response, (event) => {
-        if (event.type === "planning") {
+        if (event.type === "clarify_questions") {
+          setClarifyingQuestions((event.questions ?? []) as ClarifyingQuestion[]);
+        } else if (event.type === "awaiting_clarification") {
+          setGenerationPhase("clarifying");
+          queryClient.setQueryData(getGetProjectQueryKey(projectId), (old: any) =>
+            old ? { ...old, status: "awaiting_clarification" } : old
+          );
+        } else if (event.type === "planning") {
           setGenerationPhase("planning");
         } else if (event.type === "planning_chunk") {
           setPlanAccumulatedChunks(prev => {
@@ -163,8 +182,17 @@ export default function ProjectDetail() {
       await consumeSseStream(response, (event) => {
         if (event.type === "building") {
           setGenerationPhase("building");
+        } else if (event.type === "validating") {
+          setGenerationPhase("validating");
+        } else if (event.type === "accuracy_report" && event.report) {
+          setAccuracyReport(event.report as AccuracyReport);
+        } else if (event.type === "repair_complete") {
+          if (event.report) setAccuracyReport(event.report as AccuracyReport);
+          if (event.history) setRepairHistory(event.history as RepairHistoryEntry[]);
         } else if (event.done) {
           setGenerationPhase("idle");
+          if (event.accuracyReport) setAccuracyReport(event.accuracyReport as AccuracyReport);
+          if (event.repairHistory) setRepairHistory(event.repairHistory as RepairHistoryEntry[]);
           queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
           queryClient.invalidateQueries({ queryKey: getGetProjectFilesQueryKey(projectId) });
           toast({
@@ -187,6 +215,69 @@ export default function ProjectDetail() {
         title: "Connection Error",
         description: "Failed to stream code generation.",
         variant: "destructive"
+      });
+      queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleSubmitClarifications = async (answers: ClarifyAnswer[], skip: boolean) => {
+    if (!projectId || isGenerating) return;
+    setIsGenerating(true);
+    setSubmittedAnswers(answers);
+    setGenerationPhase("planning");
+    setClarifyingQuestions([]);
+    setPlanAccumulatedChunks("");
+    setPartialPlan({ screens: [], models: [], navigation: "" });
+    setLivePlan(null);
+    setEditedPlan(null);
+    queryClient.setQueryData(getGetProjectQueryKey(projectId), (old: any) =>
+      old ? { ...old, status: "generating" } : old
+    );
+
+    try {
+      const response = await fetch(`/api/projects/${projectId}/answer-clarifications`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ skip, answers, additionalContext: null }),
+      });
+      if (!response.ok) throw new Error("Answer submission failed");
+
+      await consumeSseStream(response, (event) => {
+        if (event.type === "planning") {
+          setGenerationPhase("planning");
+        } else if (event.type === "planning_chunk") {
+          setPlanAccumulatedChunks(prev => {
+            const next = prev + event.chunk;
+            setPartialPlan(parsePartialPlan(next));
+            return next;
+          });
+        } else if (event.type === "plan") {
+          setLivePlan(event.plan as ArchitecturePlan);
+          setEditedPlan(event.plan as ArchitecturePlan);
+        } else if (event.type === "awaiting_approval") {
+          setGenerationPhase("awaiting_approval");
+          setPlanPanelCollapsed(false);
+          queryClient.setQueryData(getGetProjectQueryKey(projectId), (old: any) =>
+            old ? { ...old, status: "awaiting_approval" } : old
+          );
+        } else if (event.type === "error" || event.error) {
+          setGenerationPhase("idle");
+          toast({
+            title: "Planning Error",
+            description: event.message || event.error || "Failed",
+            variant: "destructive",
+          });
+          queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
+        }
+      });
+    } catch (error) {
+      setGenerationPhase("idle");
+      toast({
+        title: "Connection Error",
+        description: "Failed to stream planning updates.",
+        variant: "destructive",
       });
       queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
     } finally {
@@ -217,6 +308,38 @@ export default function ProjectDetail() {
       } catch (_) {}
     }
   }, [project?.architecturePlan, project?.status, isGenerating]);
+
+  // Restore clarify questions / answers / accuracy report from project
+  useEffect(() => {
+    if (isGenerating || !project) return;
+    if (project.clarifyingQuestions && clarifyingQuestions.length === 0) {
+      try {
+        const parsed = JSON.parse(project.clarifyingQuestions) as ClarifyingQuestion[];
+        if (Array.isArray(parsed)) setClarifyingQuestions(parsed);
+      } catch (_) {}
+    }
+    if (project.clarifyAnswers && submittedAnswers.length === 0) {
+      try {
+        const parsed = JSON.parse(project.clarifyAnswers) as ClarifyAnswer[];
+        if (Array.isArray(parsed)) setSubmittedAnswers(parsed);
+      } catch (_) {}
+    }
+    if (project.accuracyReport && !accuracyReport) {
+      try {
+        const parsed = JSON.parse(project.accuracyReport) as AccuracyReport;
+        if (parsed && Array.isArray(parsed.items)) setAccuracyReport(parsed);
+      } catch (_) {}
+    }
+    if (project.repairHistory && repairHistory.length === 0) {
+      try {
+        const parsed = JSON.parse(project.repairHistory) as RepairHistoryEntry[];
+        if (Array.isArray(parsed)) setRepairHistory(parsed);
+      } catch (_) {}
+    }
+    if (project.status === "awaiting_clarification" && generationPhase === "idle") {
+      setGenerationPhase("clarifying");
+    }
+  }, [project, isGenerating]);
 
   // Auto-select first file when loaded
   useEffect(() => {
@@ -277,9 +400,26 @@ export default function ProjectDetail() {
     );
   }
 
-  const isActivelyGenerating = isGenerating || project?.status === 'generating';
+  const isAwaitingClarification = generationPhase === "clarifying" || (!isGenerating && project?.status === "awaiting_clarification");
+  const isActivelyGenerating = (isGenerating || project?.status === 'generating') && !isAwaitingClarification;
   const isAwaitingApproval = generationPhase === "awaiting_approval" || (!isGenerating && project?.status === "awaiting_approval");
   const statusBadge = () => {
+    if (isAwaitingClarification) {
+      return (
+        <span className="px-2 py-0.5 rounded text-[10px] font-mono uppercase bg-blue-500/10 text-blue-400 border border-blue-500/30 flex items-center gap-1">
+          <PencilLine className="h-3 w-3" />
+          Needs Clarification
+        </span>
+      );
+    }
+    if (generationPhase === "validating") {
+      return (
+        <span className="px-2 py-0.5 rounded text-[10px] font-mono uppercase bg-purple-500/10 text-purple-400 border border-purple-500/30 flex items-center gap-1 animate-pulse">
+          <span className="h-1.5 w-1.5 rounded-full bg-purple-400 inline-block animate-ping"></span>
+          Validating...
+        </span>
+      );
+    }
     if (generationPhase === "planning") {
       return (
         <span className="px-2 py-0.5 rounded text-[10px] font-mono uppercase bg-blue-500/10 text-blue-400 border border-blue-500/20 flex items-center gap-1 animate-pulse">
@@ -402,6 +542,27 @@ export default function ProjectDetail() {
             </Button>
           </div>
         </header>
+
+        {/* Clarifying Questions */}
+        {isAwaitingClarification && clarifyingQuestions.length > 0 && (
+          <ClarifyPanel
+            questions={clarifyingQuestions}
+            onSubmit={handleSubmitClarifications}
+            isSubmitting={isGenerating}
+          />
+        )}
+
+        {/* Submitted clarifications display (read-only) */}
+        {!isAwaitingClarification && submittedAnswers.length > 0 && (
+          <ClarifyAnswersDisplay answers={submittedAnswers} />
+        )}
+
+        {/* Accuracy Report */}
+        <AccuracyReportPanel
+          report={accuracyReport}
+          history={repairHistory}
+          defaultCollapsed={project?.status === "complete"}
+        />
 
         {/* Architecture Plan Panel */}
         <PlanPanel

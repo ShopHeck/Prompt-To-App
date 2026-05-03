@@ -23,10 +23,22 @@ export const ListProjectsResponseItem = zod.object({
   name: zod.string(),
   prompt: zod.string(),
   description: zod.string().nullable(),
-  status: zod.enum(["pending", "generating", "complete", "error"]),
+  status: zod.enum([
+    "pending",
+    "awaiting_clarification",
+    "generating",
+    "awaiting_approval",
+    "complete",
+    "error",
+  ]),
   framework: zod.enum(["swiftui", "uikit"]),
   fileCount: zod.number(),
   architecturePlan: zod.string().nullable(),
+  clarifyingQuestions: zod.string().nullable(),
+  clarifyAnswers: zod.string().nullable(),
+  enrichedPrompt: zod.string().nullable(),
+  accuracyReport: zod.string().nullable(),
+  repairHistory: zod.string().nullable(),
   createdAt: zod.string(),
   updatedAt: zod.string(),
 });
@@ -53,10 +65,22 @@ export const GetProjectResponse = zod.object({
   name: zod.string(),
   prompt: zod.string(),
   description: zod.string().nullable(),
-  status: zod.enum(["pending", "generating", "complete", "error"]),
+  status: zod.enum([
+    "pending",
+    "awaiting_clarification",
+    "generating",
+    "awaiting_approval",
+    "complete",
+    "error",
+  ]),
   framework: zod.enum(["swiftui", "uikit"]),
   fileCount: zod.number(),
   architecturePlan: zod.string().nullable(),
+  clarifyingQuestions: zod.string().nullable(),
+  clarifyAnswers: zod.string().nullable(),
+  enrichedPrompt: zod.string().nullable(),
+  accuracyReport: zod.string().nullable(),
+  repairHistory: zod.string().nullable(),
   createdAt: zod.string(),
   updatedAt: zod.string(),
 });
@@ -111,10 +135,22 @@ export const GetSharedProjectResponse = zod.object({
     name: zod.string(),
     prompt: zod.string(),
     description: zod.string().nullable(),
-    status: zod.enum(["pending", "generating", "complete", "error"]),
+    status: zod.enum([
+      "pending",
+      "awaiting_clarification",
+      "generating",
+      "awaiting_approval",
+      "complete",
+      "error",
+    ]),
     framework: zod.enum(["swiftui", "uikit"]),
     fileCount: zod.number(),
     architecturePlan: zod.string().nullable(),
+    clarifyingQuestions: zod.string().nullable(),
+    clarifyAnswers: zod.string().nullable(),
+    enrichedPrompt: zod.string().nullable(),
+    accuracyReport: zod.string().nullable(),
+    repairHistory: zod.string().nullable(),
     createdAt: zod.string(),
     updatedAt: zod.string(),
   }),
@@ -132,13 +168,72 @@ export const GetSharedProjectResponse = zod.object({
 });
 
 /**
- * @summary Generate iOS app code from a prompt (streaming)
+ * @summary Run clarify (if needed) then planning (Phase 1, streaming). Pauses for clarifications or plan approval.
  */
 export const GenerateAppParams = zod.object({
   id: zod.coerce.number(),
 });
 
 export const GenerateAppBody = zod.object({
+  additionalContext: zod.string().nullish(),
+});
+
+/**
+ * @summary Submit answers to clarifying questions and resume into the planning phase (streaming).
+ */
+export const AnswerClarificationsParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const AnswerClarificationsBody = zod.object({
+  skip: zod.boolean().optional(),
+  answers: zod.array(
+    zod.object({
+      id: zod.string(),
+      question: zod.string(),
+      answer: zod.string(),
+    }),
+  ),
+  additionalContext: zod.string().nullish(),
+});
+
+/**
+ * @summary Approve plan, run code generation, then accuracy validation + repair (streaming).
+ */
+export const ApprovePlanParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const ApprovePlanBody = zod.object({
+  plan: zod.object({
+    screens: zod.array(
+      zod.object({
+        name: zod.string(),
+        purpose: zod.string(),
+      }),
+    ),
+    models: zod.array(
+      zod.object({
+        name: zod.string(),
+        fields: zod.array(zod.string()),
+      }),
+    ),
+    navigation: zod.string(),
+    spmDependencies: zod.array(
+      zod.object({
+        url: zod.string(),
+        packageName: zod.string(),
+        productNames: zod.array(zod.string()),
+        version: zod.string(),
+      }),
+    ),
+    fileList: zod.array(
+      zod.object({
+        filename: zod.string(),
+        purpose: zod.string(),
+      }),
+    ),
+  }),
   additionalContext: zod.string().nullish(),
 });
 
@@ -150,10 +245,22 @@ export const GetRecentProjectsResponseItem = zod.object({
   name: zod.string(),
   prompt: zod.string(),
   description: zod.string().nullable(),
-  status: zod.enum(["pending", "generating", "complete", "error"]),
+  status: zod.enum([
+    "pending",
+    "awaiting_clarification",
+    "generating",
+    "awaiting_approval",
+    "complete",
+    "error",
+  ]),
   framework: zod.enum(["swiftui", "uikit"]),
   fileCount: zod.number(),
   architecturePlan: zod.string().nullable(),
+  clarifyingQuestions: zod.string().nullable(),
+  clarifyAnswers: zod.string().nullable(),
+  enrichedPrompt: zod.string().nullable(),
+  accuracyReport: zod.string().nullable(),
+  repairHistory: zod.string().nullable(),
   createdAt: zod.string(),
   updatedAt: zod.string(),
 });
