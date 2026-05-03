@@ -132,6 +132,7 @@ export default function NewProject() {
                       className="min-h-[180px] resize-y rounded-lg border-border/80 bg-card/30 leading-relaxed font-mono text-sm transition-colors focus-visible:border-primary/60 focus-visible:ring-1 focus-visible:ring-primary/30"
                       {...field}
                       data-testid="textarea-prompt"
+                      data-tour="prompt"
                     />
                   </FormControl>
                   <FormDescription className="text-xs text-muted-foreground/80">
@@ -155,6 +156,7 @@ export default function NewProject() {
                     <RadioGroup
                       onValueChange={field.onChange}
                       defaultValue={field.value}
+                      data-tour="framework"
                       className="grid grid-cols-1 gap-3 sm:grid-cols-2"
                     >
                       {[

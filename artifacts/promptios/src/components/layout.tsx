@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { Terminal, LayoutDashboard, Plus, Menu, X } from "lucide-react";
+import { Terminal, LayoutDashboard, Plus, Menu, X, BookOpen, Compass } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
+import { useTour } from "@/components/tour";
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -10,18 +11,20 @@ interface LayoutProps {
 function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
   const [location] = useLocation();
   const items = [
-    { href: "/", label: "Dashboard", icon: LayoutDashboard },
-    { href: "/projects/new", label: "New project", icon: Plus },
+    { href: "/", label: "Dashboard", icon: LayoutDashboard, tour: undefined },
+    { href: "/projects/new", label: "New project", icon: Plus, tour: "new-project" },
+    { href: "/guide/app-store", label: "App Store guide", icon: BookOpen, tour: "guide" },
   ];
   return (
     <nav className="flex flex-col gap-0.5">
-      {items.map(({ href, label, icon: Icon }) => {
+      {items.map(({ href, label, icon: Icon, tour }) => {
         const active = location === href;
         return (
           <Link
             key={href}
             href={href}
             onClick={onNavigate}
+            data-tour={tour}
             className={`group relative flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-all duration-200 active:scale-[0.98] ${
               active
                 ? "bg-secondary/80 text-foreground"
@@ -37,6 +40,24 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
         );
       })}
     </nav>
+  );
+}
+
+function ShowTourButton({ onNavigate }: { onNavigate?: () => void }) {
+  const { start } = useTour();
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        onNavigate?.();
+        start();
+      }}
+      data-testid="btn-show-tour"
+      className="group flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm text-muted-foreground transition-all duration-200 hover:bg-secondary/40 hover:text-foreground active:scale-[0.98]"
+    >
+      <Compass className="h-4 w-4" strokeWidth={1.75} />
+      <span className="font-medium">Show tour</span>
+    </button>
   );
 }
 
@@ -63,6 +84,11 @@ function SidebarBody({ onNavigate }: { onNavigate?: () => void }) {
           Workspace
         </div>
         <NavLinks onNavigate={onNavigate} />
+
+        <div className="mt-6 px-3 pb-2 text-[10px] font-mono font-semibold uppercase tracking-widest text-muted-foreground/60">
+          Help
+        </div>
+        <ShowTourButton onNavigate={onNavigate} />
       </div>
 
       <div className="border-t border-border p-4">

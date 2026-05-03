@@ -7,6 +7,8 @@ import Dashboard from "@/pages/dashboard";
 import NewProject from "@/pages/new-project";
 import ProjectDetail from "@/pages/project-detail";
 import SharedProject from "@/pages/shared-project";
+import AppStoreGuide from "@/pages/app-store-guide";
+import { TourProvider } from "@/components/tour";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -24,6 +26,7 @@ function Router() {
       <Route path="/projects/new" component={NewProject} />
       <Route path="/projects/:id" component={ProjectDetail} />
       <Route path="/share/:token" component={SharedProject} />
+      <Route path="/guide/app-store" component={AppStoreGuide} />
       <Route component={NotFound} />
     </Switch>
   );
@@ -34,7 +37,9 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-          <Router />
+          <TourProvider>
+            <Router />
+          </TourProvider>
         </WouterRouter>
         <Toaster />
       </TooltipProvider>

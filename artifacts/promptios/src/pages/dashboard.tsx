@@ -51,7 +51,7 @@ export default function Dashboard() {
               Welcome back. <span className="text-muted-foreground">Build a new iOS app, or pick up where you left off.</span>
             </h1>
           </div>
-          <Link href="/projects/new" className="shrink-0">
+          <Link href="/projects/new" className="shrink-0" data-tour="new-project">
             <Button
               data-testid="btn-new-project"
               className="group h-11 gap-2 rounded-lg px-5 font-medium transition-all active:scale-[0.98]"

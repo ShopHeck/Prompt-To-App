@@ -12,8 +12,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   FileCode, Play, RotateCw, AlertTriangle, File, CheckCircle2,
   Copy, Download, Code2, Cpu, Share2, Check, Layers, Hammer, PencilLine,
-  FolderTree, Smartphone
+  FolderTree, Smartphone, ArrowUpRight
 } from "lucide-react";
+import { Link } from "wouter";
 import { PhonePreview } from "@/components/phone-preview";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle, SheetClose } from "@/components/ui/sheet";
@@ -477,11 +478,11 @@ export default function ProjectDetail() {
     if (!project) return;
     const hasPreview = !!project.livePreviewHtml;
     setPreviewAvailable(hasPreview);
-    if (hasPreview && project.status === "complete" && !initialPreviewModeApplied.current) {
+    if (hasPreview && project.status === "complete" && !initialPreviewModeApplied.current && !selectedFileId) {
       setViewMode("preview");
       initialPreviewModeApplied.current = true;
     }
-  }, [project?.livePreviewHtml, project?.status]);
+  }, [project?.livePreviewHtml, project?.status, selectedFileId]);
 
   const selectedFile = files?.find(f => f.id === selectedFileId);
 
@@ -658,6 +659,7 @@ export default function ProjectDetail() {
                   size="sm"
                   variant="outline"
                   onClick={handleDownload}
+                  data-tour="download"
                   className="gap-1.5 rounded-md font-mono text-xs active:scale-[0.97]"
                   title="Download as Xcode-ready zip"
                 >
@@ -703,11 +705,13 @@ export default function ProjectDetail() {
 
         {/* Clarifying Questions */}
         {isAwaitingClarification && clarifyingQuestions.length > 0 && (
-          <ClarifyPanel
-            questions={clarifyingQuestions}
-            onSubmit={handleSubmitClarifications}
-            isSubmitting={isGenerating}
-          />
+          <div data-tour="clarify">
+            <ClarifyPanel
+              questions={clarifyingQuestions}
+              onSubmit={handleSubmitClarifications}
+              isSubmitting={isGenerating}
+            />
+          </div>
         )}
 
         {/* Submitted clarifications display (read-only) */}
@@ -716,23 +720,51 @@ export default function ProjectDetail() {
         )}
 
         {/* Accuracy Report */}
-        <AccuracyReportPanel
-          report={accuracyReport}
-          history={repairHistory}
-          defaultCollapsed={project?.status === "complete"}
-        />
+        <div data-tour="accuracy">
+          <AccuracyReportPanel
+            report={accuracyReport}
+            history={repairHistory}
+            defaultCollapsed={project?.status === "complete"}
+          />
+        </div>
 
         {/* Architecture Plan Panel */}
-        <PlanPanel
-          plan={livePlan}
-          isStreaming={generationPhase === "planning"}
-          partialPlan={partialPlan}
-          collapsed={planPanelCollapsed}
-          onToggle={() => setPlanPanelCollapsed(prev => !prev)}
-          editable={isAwaitingApproval}
-          editedPlan={editedPlan}
-          onEditedPlanChange={setEditedPlan}
-        />
+        <div data-tour="plan">
+          <PlanPanel
+            plan={livePlan}
+            isStreaming={generationPhase === "planning"}
+            partialPlan={partialPlan}
+            collapsed={planPanelCollapsed}
+            onToggle={() => setPlanPanelCollapsed(prev => !prev)}
+            editable={isAwaitingApproval}
+            editedPlan={editedPlan}
+            onEditedPlanChange={setEditedPlan}
+          />
+        </div>
+
+        {/* App Store guide CTA - shows after files generated */}
+        {project?.status === "complete" && (files?.length ?? 0) > 0 && (
+          <div className="border-b border-border/60 bg-gradient-to-r from-primary/5 via-primary/[0.02] to-transparent shrink-0">
+            <Link
+              href="/guide/app-store"
+              data-testid="link-app-store-guide-cta"
+              className="group flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-primary/[0.04]"
+            >
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary/10 ring-1 ring-primary/30">
+                <CheckCircle2 className="h-3.5 w-3.5 text-primary" strokeWidth={2} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium text-foreground">
+                  Ready to ship? Read the App Store guide
+                </div>
+                <div className="font-mono text-[11px] text-muted-foreground">
+                  Step-by-step: signing, archiving, TestFlight, App Store Connect submission.
+                </div>
+              </div>
+              <ArrowUpRight className="h-4 w-4 shrink-0 text-muted-foreground transition-all group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-primary" strokeWidth={1.75} />
+            </Link>
+          </div>
+        )}
 
         <div className="flex flex-1 overflow-hidden">
           {/* Desktop file explorer sidebar */}
