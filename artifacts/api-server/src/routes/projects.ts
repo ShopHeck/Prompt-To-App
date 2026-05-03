@@ -784,7 +784,7 @@ async function runAccuracyValidation(
     })
     .join("\n");
 
-  const systemPrompt = `You are a strict QA reviewer. Compare a generated iOS project to its original prompt and approved architecture plan, and produce a structured accuracy report.
+  const systemPrompt = `You are a strict QA reviewer for studio-grade iOS apps. You evaluate both COMPLETENESS (does the build match the plan?) and QUALITY (does it look hand-crafted, accessible, and App Store-shippable?). Compare the generated project to its original prompt and approved architecture plan, and produce a structured accuracy report.
 
 Output ONLY JSON of this shape:
 {
@@ -795,15 +795,34 @@ Output ONLY JSON of this shape:
   ]
 }
 
-Rules:
+Status rules:
 - Include one item for every planned screen, every planned model, and every planned file.
-- "matched": present in output and serves the planned purpose.
+- "matched": present in output AND meets studio-grade quality (see quality bar below).
 - "missing": planned but not in the output.
-- "off-spec": present but clearly wrong purpose, empty stub, or trivially broken.
+- "off-spec": present but clearly wrong purpose, empty stub, trivially broken, OR fails the quality bar (e.g. a screen with hardcoded colors, no loading/empty state, or no accessibility). Mark off-spec aggressively when quality is below studio bar — the repair pass will fix it.
 - "extra": for output items NOT in the plan that look unrelated. Only flag if clearly off-topic; small helpers are fine.
-- overallScore reflects how well the build matches the prompt + plan.
-- Keep notes very short (<= 12 words).
-- Output JSON only. No markdown.`;
+
+Studio-grade quality bar (used to decide matched vs. off-spec, and to drive overallScore):
+- Design system: there is a Theme/DesignSystem file with color palette + typography + spacing tokens. Other files use those tokens, NOT hardcoded colors / font sizes.
+- States: list / data-driven screens have explicit loading, empty, and error states (or compose dedicated state-view components).
+- Realistic data: seed data is varied and believable, not "Item 1, Item 2".
+- Modern Swift: SwiftUI uses @Observable (Observation framework) for view models, NavigationStack (not NavigationView), async/await for any IO.
+- Accessibility: icon-only buttons have accessibility labels; body text scales with Dynamic Type.
+- Polish: at least some haptics or animations on key interactions where they fit.
+- Persistence + Settings: when relevant to the app, there is a persistence layer and a Settings screen.
+
+Scoring rubric (overallScore is the holistic result, not a strict average):
+- 90-100: Plan complete + all studio-grade quality bars met. Reviewer would happily ship.
+- 75-89: Plan complete but 1-2 quality gaps (e.g. design system used inconsistently, missing some empty states).
+- 50-74: Plan complete but quality is mediocre — many hardcoded colors, weak states, no haptics/animations, dated patterns.
+- 25-49: Plan partially missing AND quality is weak.
+- 0-24: Plan largely missing or output is broken.
+
+Notes guidance:
+- Keep notes <= 14 words and SPECIFIC. Examples: "uses hardcoded #FF0000 instead of Theme.colors.danger", "no empty state for empty list", "uses NavigationView (deprecated)", "missing accessibility labels on icon buttons".
+- For matched items, omit notes unless something noteworthy.
+
+Output JSON only. No markdown.`;
 
   const userMessage = `Original prompt:
 ${enrichedPrompt}
@@ -822,7 +841,7 @@ Produce the JSON report now.`;
   try {
     const completion = await openai.chat.completions.create({
       model: "gpt-5.4",
-      max_completion_tokens: 1800,
+      max_completion_tokens: 2400,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userMessage },
@@ -867,7 +886,7 @@ function collectRepairTargets(report: AccuracyReport): string[] {
       targets.add(`${item.name}.swift`);
     }
   }
-  return Array.from(targets).slice(0, 6);
+  return Array.from(targets).slice(0, 10);
 }
 
 async function runRepairPass(
@@ -883,7 +902,7 @@ async function runRepairPass(
     .map(f => `- ${f.filepath}`)
     .join("\n");
 
-  const systemPrompt = `You are an expert iOS developer doing a targeted repair pass. Regenerate ONLY the files listed below to match the prompt + approved plan. Do not touch other files.
+  const systemPrompt = `You are a principal iOS engineer doing a targeted POLISH + REPAIR pass on a studio-grade ${frameworkName} app. Regenerate ONLY the files listed below — either because they are missing OR because they fall short of the studio quality bar (hardcoded colors, missing states, weak accessibility, dated SwiftUI patterns, etc.). Do not touch any other file.
 
 Output ONLY JSON of this shape:
 {
@@ -893,10 +912,16 @@ Output ONLY JSON of this shape:
 }
 
 Rules:
-- One entry per requested filename.
+- One entry per requested filename. If a target is a screen/component that should live in a subfolder (e.g. Components/), use that filepath.
 - Place Swift files under ${appTargetName}/ (no "Sources/" prefix — this is a real iOS App target, not an SPM executable).
-- Use ${frameworkName} idioms.
-- Keep code production-quality and self-contained.
+- Use ${frameworkName} idioms. SwiftUI: @Observable view models (NOT @ObservableObject), NavigationStack, async/await, modern symbol effects.
+- Read tokens from the existing Theme/DesignSystem file — NEVER use hardcoded colors, font sizes, or raw paddings (use Theme.spacing.* / Theme.radii.* / Theme.colors.* / Font.app*).
+- Every list / data screen MUST have explicit loading, empty, and error states (use the existing EmptyStateView / LoadingView / ErrorView components when present in the plan).
+- Use realistic, varied seed data (5-10 items, believable names/dates/descriptions). NEVER "Item 1, Item 2".
+- Add accessibility labels on icon-only buttons; allow Dynamic Type (no \`.fixedSize()\` on body copy); keep tap targets >= 44pt.
+- Add subtle haptics (Haptics.impact / Haptics.success / Haptics.error) on primary interactions when a Haptics helper exists.
+- File header is a one-line comment: \`// AppName/FileName.swift — purpose\`.
+- Files should be 30-120 lines, dense and well-factored. Extract subviews when nesting exceeds 3 levels.
 - Do not include Package.swift, Info.plist, project.yml, README.md, Assets.xcassets, or any Contents.json — those are managed by the build system.
 - Output JSON only.`;
 
@@ -917,7 +942,7 @@ Output JSON now.`;
 
   const completion = await openai.chat.completions.create({
     model: "gpt-5.4",
-    max_completion_tokens: 4000,
+    max_completion_tokens: 6000,
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: userMessage },
@@ -1137,24 +1162,37 @@ async function runPlanningPhase(
 
   sendEvent({ type: "planning", message: "Designing architecture..." });
 
-  const planningSystemPrompt = `You are a senior iOS architect. Given an app description, produce a concise architecture plan as a JSON object.
+  const planningSystemPrompt = `You are a senior iOS product designer and architect at a top-tier studio (think Linear, Things, Stripe, Apple Design Award winners). You design apps that look hand-crafted, feel native, and ship to the App Store.
+
+Given an app description, produce a concise architecture plan as a JSON object.
 
 Output ONLY a valid JSON object with this exact structure:
 {
   "screens": [
-    { "name": "ScreenName", "purpose": "One-line description of what this screen does" }
+    { "name": "ScreenName", "purpose": "One-line description including the visual treatment, key states (loading/empty/error), and primary interactions" }
   ],
   "models": [
     { "name": "ModelName", "fields": ["fieldName: Type", "fieldName: Type"] }
   ],
-  "navigation": "Short description of the navigation flow between screens",
+  "navigation": "Short description of the navigation flow between screens — including the primary container (NavigationStack vs. TabView), the visual mood/design language (e.g. 'warm minimal, generous whitespace, Inter-style sans, accent #6366F1, rounded 16'), and any onboarding/settings flow.",
   "spmDependencies": [],
   "fileList": [
-    { "filename": "FileName.swift", "purpose": "One-line description" }
+    { "filename": "FileName.swift", "purpose": "One-line description of the file's role and notable details" }
   ]
 }
 
-Rules:
+Studio-grade architecture rules — the fileList MUST include all of the following (in addition to screens and models):
+- A design-system file (e.g. "Theme.swift" or "DesignSystem.swift") that defines the app's color palette, typography scale, spacing tokens, corner radii, shadow elevations, and motion curves. Every other view will read from it — no hardcoded colors or font sizes anywhere.
+- A "Haptics.swift" helper that wraps UIImpactFeedbackGenerator / UINotificationFeedbackGenerator for standardized tactile feedback on key interactions.
+- One "ViewModel" file per stateful screen (e.g. "HomeViewModel.swift") using the @Observable macro (iOS 17+). Pure SwiftUI views consume them via @State / @Bindable.
+- A "Components/" folder of 2-4 reusable view files (e.g. "PrimaryButton.swift", "Card.swift", "EmptyStateView.swift", "LoadingView.swift", "ErrorView.swift") that the screens compose. Empty / loading / error states are first-class — every list-style screen must have all three.
+- A persistence/service layer when the app has state worth keeping across launches: a "Store.swift" or service file using @AppStorage, UserDefaults, or SwiftData. Choose the lightest option that fits.
+- A "SettingsView.swift" screen with About, Version (read from Bundle), and any user-facing toggles (e.g. dark-mode override, units, notifications).
+- An onboarding/welcome screen ("OnboardingView.swift") whenever the app benefits from a first-launch introduction (most apps with state do).
+
+Other rules:
+- screens.purpose and fileList.purpose should be specific and visually-grounded ("Hero card with current city, glassy translucent header, hourly scroll strip below" — not "shows weather").
+- Aim for 12-18 Swift files total. Fewer than 10 is almost never enough for studio-grade.
 - spmDependencies must be an array of objects. Each object must include ALL of these fields:
     "url": the full GitHub URL of the Swift package (e.g. "https://github.com/Alamofire/Alamofire")
     "packageName": the Swift package identity (e.g. "Alamofire")
@@ -1163,7 +1201,7 @@ Rules:
   Leave spmDependencies as an empty array [] if the standard Apple frameworks suffice — which is almost always the case.
 - fileList must include all Swift source files only (do NOT list Package.swift, Info.plist, project.yml, README, or Assets.xcassets — those are auto-generated by the build pipeline).
 - Always include a single @main entry-point Swift file in fileList. For SwiftUI: a file ending in "App.swift" containing \`@main struct ...App: App\`. For UIKit: an "AppDelegate.swift" file (UIApplicationDelegate) plus a "SceneDelegate.swift" file.
-- Do not add markdown or any text outside the JSON object`;
+- Do not add markdown or any text outside the JSON object.`;
 
   const planningUserMessage = `Plan the architecture for this iOS ${frameworkName} app:
 
@@ -1480,7 +1518,7 @@ Architecture Plan (follow this exactly):
 ${spmDepsBlock}
 `;
 
-    const systemPrompt = `You are an expert iOS developer. Generate a complete, production-quality iOS app using ${frameworkName} that is App Store-submittable.
+    const systemPrompt = `You are a principal iOS engineer at a top-tier studio (Linear, Things, Stripe, Apple Design Award caliber). You write code that looks hand-crafted, feels native, and ships to the App Store. Generate a complete, studio-grade iOS app using ${frameworkName} from the plan below.
 ${planContextBlock}
 Output ONLY a JSON object with this exact structure:
 {
@@ -1500,19 +1538,42 @@ PROJECT STRUCTURE — this is a real iOS App target (XcodeGen-generated .xcodepr
 - Do NOT generate Package.swift, Info.plist, project.yml, README.md, or any Assets.xcassets/Contents.json files — the build pipeline owns those.
 
 MANDATORY content:
-1. Exactly one @main App entry-point file: filename "${appTargetName}App.swift" at filepath "${appTargetName}/${appTargetName}App.swift". For SwiftUI use \`@main struct ${appTargetName}App: App { var body: some Scene { WindowGroup { ContentView() } } }\`. For UIKit use \`@main class AppDelegate: UIResponder, UIApplicationDelegate\` plus a SceneDelegate.
-2. A primary screen file (e.g. ContentView.swift) plus all screens listed in the plan.
-3. All data model files listed in the plan.
+1. Exactly one @main App entry-point file: filename "${appTargetName}App.swift" at filepath "${appTargetName}/${appTargetName}App.swift". For SwiftUI use \`@main struct ${appTargetName}App: App { var body: some Scene { WindowGroup { RootView() } } }\` where RootView (or whatever primary screen the plan names) is the planned entry screen. For UIKit use \`@main class AppDelegate: UIResponder, UIApplicationDelegate\` plus a SceneDelegate. If the persistence layer uses SwiftData (@Model), add the required \`.modelContainer(for: [Type1.self, Type2.self])\` modifier to the WindowGroup.
+2. A primary screen file (e.g. ContentView.swift) plus every screen listed in the plan.
+3. Every data model file listed in the plan.
+4. Every supporting file from the plan: Theme/DesignSystem, Haptics, ViewModels, Components, Store/service, Settings, Onboarding (when planned).
 
-Requirements:
-- Generate 7-12 Swift files minimum.
-- Use modern ${frameworkName} patterns and Swift best practices.
-- Include proper error handling, loading states, and empty states.
-- Use realistic sample data where needed.
-- For UIKit: programmatic Auto Layout, no Storyboards (none are wired up).
-- For SwiftUI: @main App struct, @StateObject, @Published, NavigationStack/TabView as appropriate.
+DESIGN SYSTEM (non-negotiable) — implement a Theme.swift file that defines:
+- A cohesive color palette appropriate to the app's mood. Provide BOTH light and dark variants via \`Color(uiColor: UIColor { trait in trait.userInterfaceStyle == .dark ? darkHex : lightHex })\` or asset-catalog-style dynamic colors. Tokens at minimum: background, surface, surfaceElevated, textPrimary, textSecondary, textTertiary, accent, accentMuted, border, success, warning, danger.
+- A typography scale: largeTitle, title, headline, body, callout, footnote — each with weight + tracking. Wrap them as \`Font\` extensions (e.g. \`Font.appTitle\`).
+- Spacing tokens (xs:4, s:8, m:12, l:16, xl:24, xxl:32) and corner radii (sm:8, md:12, lg:16, xl:24, full:999).
+- Shadow elevations (e1, e2, e3) as ViewModifiers.
+- Motion curves: \`Animation.smooth\` / \`Animation.snappy\` constants for the app.
+Every screen and component MUST consume Theme tokens. Hardcoded colors, fixed font sizes, raw paddings (other than 0/spacing tokens) are DISQUALIFYING.
+
+UX QUALITY (non-negotiable):
+- Every list / data-driven screen has explicit loading, empty, and error states — using bespoke EmptyStateView / LoadingView / ErrorView components from the plan, with a SF Symbol, headline, body, and (when relevant) a primary action button.
+- Realistic seeded data: 5-10 varied items per list with believable names, dates, descriptions, emoji/symbols, and reasonable variation. NEVER "Item 1, Item 2".
+- Persistence: when state matters across launches, persist via @AppStorage / UserDefaults JSON / SwiftData (@Model). Pick the lightest fit.
+- Haptics: tap a Haptics.impact(.soft) on primary buttons, .success / .error on completions/errors. Use sparingly and meaningfully.
+- Animations: use \`withAnimation(.smooth)\` on state changes; matchedGeometryEffect for hero transitions; \`.symbolEffect(.bounce)\` / \`.contentTransition(.numericText())\` (iOS 17+) where it fits. Subtle, not gimmicky.
+- Accessibility: every Image/Icon-only button has \`.accessibilityLabel\`; decorative images use \`.accessibilityHidden(true)\`; text scales with Dynamic Type (no \`.fixedSize()\` on body copy); tap targets are at least 44pt.
+- Settings screen uses Form with sections, includes Version (\`Bundle.main.infoDictionary\`), and a "Made with promptiOS" footer is fine.
+
+CODE QUALITY (non-negotiable for SwiftUI):
+- Use the @Observable macro (Observation framework, iOS 17+) for ViewModels — NOT @ObservableObject + @Published. Views own them with \`@State private var viewModel = HomeViewModel()\` and pass children \`@Bindable var viewModel\` when they need to mutate.
+- Prefer \`NavigationStack\` (not the deprecated \`NavigationView\`).
+- Pure value types for models; \`Identifiable\` + \`Hashable\` where lists need them.
+- Concurrency: \`async/await\`, \`Task { ... }\`, \`@MainActor\` on UI types when needed. No completion handlers.
+- File header is a one-line comment: \`// AppName/FileName.swift — purpose\`. No license blocks.
+- Keep view bodies readable: extract subviews when nesting exceeds ~3 levels, and prefer many small views over giant ones.
+
+GENERAL RULES:
+- Generate 12-18 Swift files. Fewer than 10 is disqualifying. Each file should be 30-120 lines, dense and well-factored.
+- For UIKit: programmatic Auto Layout, no Storyboards. Same design-system + state + accessibility expectations apply (UIColor extensions, UIFont extensions, etc.).
 - If the app uses Camera, Microphone, Location, Contacts, Photos, HealthKit, or any privacy-sensitive API, add a comment at the top of the relevant Swift file: \`// REQUIRES Info.plist key: NSCameraUsageDescription = "<reason>"\` (the user reads README.md for what to add).
-- All filepaths must use the ${appTargetName}/ prefix (e.g. "${appTargetName}/ContentView.swift").`;
+- All filepaths must use the ${appTargetName}/ prefix (e.g. "${appTargetName}/ContentView.swift", "${appTargetName}/Components/PrimaryButton.swift").
+- The code MUST compile cleanly against iOS 17+ with Xcode 15+ — no experimental APIs, no deprecated symbols.`;
 
     const userMessage = `Create a complete iOS ${frameworkName} app for: ${project.enrichedPrompt ?? project.prompt}${contextBlock}
 
