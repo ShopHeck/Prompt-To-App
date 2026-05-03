@@ -9,8 +9,11 @@ interface PhonePreviewProps {
 
 export function PhonePreview({ src, isGenerating, emptyHint, reloadKey }: PhonePreviewProps) {
   return (
-    <div className="flex h-full w-full items-center justify-center overflow-auto bg-gradient-to-br from-background via-background to-secondary/20 p-4 md:p-8">
-      <div className="relative shrink-0" style={{ width: 320, height: 660 }}>
+    <div className="flex h-full w-full items-start justify-center overflow-auto bg-gradient-to-br from-background via-background to-secondary/20 px-3 py-4 md:items-center md:p-8">
+      <div
+        className="relative mx-auto shrink-0 w-[min(320px,calc(100vw-32px))]"
+        style={{ aspectRatio: "320 / 660" }}
+      >
         <div
           className="absolute inset-0 rounded-[44px] bg-zinc-950 shadow-[0_30px_60px_-20px_rgba(0,0,0,0.8),inset_0_0_0_1px_rgba(255,255,255,0.06)]"
           style={{ padding: 8 }}
@@ -30,7 +33,7 @@ export function PhonePreview({ src, isGenerating, emptyHint, reloadKey }: PhoneP
                 key={reloadKey ?? 0}
                 src={src}
                 title="App preview"
-                sandbox="allow-scripts allow-same-origin allow-forms"
+                sandbox="allow-scripts allow-forms"
                 referrerPolicy="no-referrer"
                 className="h-full w-full border-0 bg-white"
               />
@@ -45,9 +48,6 @@ export function PhonePreview({ src, isGenerating, emptyHint, reloadKey }: PhoneP
             )}
           </div>
         </div>
-        <div className="pointer-events-none absolute -right-1 top-32 h-16 w-[3px] rounded-l-full bg-zinc-800" />
-        <div className="pointer-events-none absolute -left-1 top-24 h-10 w-[3px] rounded-r-full bg-zinc-800" />
-        <div className="pointer-events-none absolute -left-1 top-40 h-16 w-[3px] rounded-r-full bg-zinc-800" />
       </div>
     </div>
   );

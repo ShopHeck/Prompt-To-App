@@ -128,31 +128,19 @@ export function TourProvider({ children }: { children: React.ReactNode }) {
     return undefined;
   }, []);
 
-  // Skip steps whose targets aren't present on the current page
+  // If a step's target isn't on the current page, keep the step active but
+  // render the popover centered (handled in TourOverlay via missing rect).
+  // Poll for the element to reappear when the user navigates to its page.
+  const [, forceTick] = useState(0);
   useEffect(() => {
     if (!isActive) return;
     const step = TOUR_STEPS[stepIndex];
-    if (!step) return;
-    if (!step.selector) return;
-    const el = document.querySelector(step.selector);
-    if (el) return;
-    // Try briefly to wait for it (e.g. async render); if not, skip forward
-    const timer = window.setTimeout(() => {
-      const el2 = document.querySelector(step.selector!);
-      if (!el2) {
-        if (stepIndex < TOUR_STEPS.length - 1) {
-          setStepIndex(i => i + 1);
-        } else {
-          finish();
-        }
-      } else {
-        stepRefreshRef.current += 1;
-        // trigger rect recompute
-        setRect(prev => prev);
-      }
-    }, 350);
-    return () => window.clearTimeout(timer);
-  }, [isActive, stepIndex, finish]);
+    if (!step?.selector) return;
+    const id = window.setInterval(() => {
+      forceTick(t => t + 1);
+    }, 500);
+    return () => window.clearInterval(id);
+  }, [isActive, stepIndex]);
 
   // Compute rect for current step's target
   useLayoutEffect(() => {
@@ -245,6 +233,7 @@ function TourOverlay({
   const isLast = stepIndex === total - 1;
   const isFirst = stepIndex === 0;
   const isCenter = !rect || step.placement === "center";
+  const targetMissing = !!step.selector && !rect;
 
   // Compute popover position
   let popStyle: React.CSSProperties;
@@ -342,6 +331,11 @@ function TourOverlay({
             </div>
             <h3 className="mt-1.5 text-sm font-semibold text-foreground">{step.title}</h3>
             <p className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">{step.body}</p>
+            {targetMissing && (
+              <p className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[11px] leading-snug text-amber-300">
+                This step lives on another page. Navigate there and the highlight will appear, or use Next to skip.
+              </p>
+            )}
           </div>
         </div>
         <div className="flex items-center justify-between gap-2 border-t border-border/60 px-4 py-2.5">
