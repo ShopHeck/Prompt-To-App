@@ -1587,7 +1587,8 @@ Generate Swift sources only. Place every file under ${appTargetName}/. Always in
 
     const stream = await openai.chat.completions.create({
       model: "gpt-5.4",
-      max_completion_tokens: 32768,
+      max_completion_tokens: 65536,
+      response_format: { type: "json_object" },
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userMessage },
@@ -1597,9 +1598,11 @@ Generate Swift sources only. Place every file under ${appTargetName}/. Always in
 
     let fullResponse = "";
     let chunkCount = 0;
+    let finishReason: string | null = null;
 
     for await (const chunk of stream) {
-      const content = chunk.choices[0]?.delta?.content;
+      const choice = chunk.choices[0];
+      const content = choice?.delta?.content;
       if (content) {
         fullResponse += content;
         chunkCount++;
@@ -1607,19 +1610,47 @@ Generate Swift sources only. Place every file under ${appTargetName}/. Always in
           sendEvent({ type: "progress", message: "Generating code..." });
         }
       }
+      if (choice?.finish_reason) finishReason = choice.finish_reason;
     }
 
     sendEvent({ type: "parsing", message: "Parsing generated files..." });
 
     let parsed: { files: Array<{ filename: string; filepath: string; content: string; language: string }>; description?: string };
     try {
-      const jsonMatch = fullResponse.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error("No JSON found in response");
-      parsed = JSON.parse(jsonMatch[0]);
+      // With response_format=json_object the response is raw JSON, but be
+      // defensive against accidental markdown fences from older models.
+      let jsonText = fullResponse.trim();
+      const fenced = jsonText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+      if (fenced) jsonText = fenced[1].trim();
+      try {
+        parsed = JSON.parse(jsonText);
+      } catch {
+        // Fallback: extract from first '{' to last '}' (handles stray prose).
+        const firstBrace = jsonText.indexOf("{");
+        const lastBrace = jsonText.lastIndexOf("}");
+        if (firstBrace === -1 || lastBrace <= firstBrace) {
+          throw new Error(
+            finishReason === "length"
+              ? "Model output was truncated before JSON closed (token cap reached)."
+              : "No JSON object found in model output.",
+          );
+        }
+        parsed = JSON.parse(jsonText.slice(firstBrace, lastBrace + 1));
+      }
     } catch (parseErr) {
-      req.log.error({ parseErr }, "Failed to parse AI response");
+      const message = parseErr instanceof Error ? parseErr.message : "unknown parse error";
+      const truncated = finishReason === "length";
+      req.log.error(
+        { parseErr: message, finishReason, responseLength: fullResponse.length, head: fullResponse.slice(0, 400) },
+        "Failed to parse AI response",
+      );
       await db.update(projectsTable).set({ status: "error" }).where(eq(projectsTable.id, id));
-      sendEvent({ type: "error", message: "Failed to parse generated code" });
+      sendEvent({
+        type: "error",
+        message: truncated
+          ? "Code generation hit the model's output limit before finishing. Try a smaller plan or split features across screens."
+          : `Failed to parse generated code: ${message}`,
+      });
       res.end();
       return;
     }
