@@ -25,6 +25,8 @@ import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { PlanPanel, parsePartialPlan, type ArchitecturePlan, type PartialPlan } from "@/components/plan-panel";
 import { ClarifyPanel, ClarifyAnswersDisplay, type ClarifyingQuestion, type ClarifyAnswer } from "@/components/clarify-panel";
 import { AccuracyReportPanel, type AccuracyReport, type RepairHistoryEntry } from "@/components/accuracy-report-panel";
+import { BuildTerminal, type LogKind, type LogLine } from "@/components/build-terminal";
+import { Terminal as TerminalIcon } from "lucide-react";
 
 interface ExplorerFile {
   id: number;
@@ -154,6 +156,23 @@ export default function ProjectDetail() {
   const [previewAvailable, setPreviewAvailable] = useState(false);
   const [previewReloadKey, setPreviewReloadKey] = useState(0);
 
+  // Build terminal state
+  const [terminalLines, setTerminalLines] = useState<LogLine[]>([]);
+  const [terminalDismissed, setTerminalDismissed] = useState(false);
+  const lineIdRef = useRef(0);
+  const buildStartRef = useRef<number | null>(null);
+
+  const appendLog = (kind: LogKind, text: string) => {
+    setTerminalLines(prev => [
+      ...prev,
+      { id: ++lineIdRef.current, time: Date.now(), kind, text },
+    ]);
+  };
+  const resetTerminal = () => {
+    setTerminalLines([]);
+    setTerminalDismissed(false);
+  };
+
   const { data: project, isLoading: isLoadingProject, error: projectError } = useGetProject(projectId, {
     query: {
       enabled: !!projectId,
@@ -205,7 +224,10 @@ export default function ProjectDetail() {
     setAccuracyReport(null);
     setRepairHistory([]);
     hasTriggeredInitialGeneration.current = true;
-    
+    resetTerminal();
+    buildStartRef.current = Date.now();
+    appendLog("info", `Starting build for "${project?.name ?? "project"}" (${project?.framework ?? "swiftui"})…`);
+
     queryClient.setQueryData(getGetProjectQueryKey(projectId), (old: any) => 
       old ? { ...old, status: 'generating' } : old
     );
@@ -219,33 +241,51 @@ export default function ProjectDetail() {
       
       if (!response.ok) throw new Error("Generation request failed");
 
+      let planChunkSeen = false;
       await consumeSseStream(response, (event) => {
-        if (event.type === "clarify_questions") {
-          setClarifyingQuestions((event.questions ?? []) as ClarifyingQuestion[]);
+        if (event.type === "clarify_check") {
+          appendLog("clarify", "Inspecting prompt for ambiguity…");
+        } else if (event.type === "clarify_questions") {
+          const qs = (event.questions ?? []) as ClarifyingQuestion[];
+          setClarifyingQuestions(qs);
+          appendLog("clarify", `Identified ${qs.length} clarifying question${qs.length === 1 ? "" : "s"}.`);
         } else if (event.type === "awaiting_clarification") {
           setGenerationPhase("clarifying");
+          appendLog("clarify", "Awaiting your answers to refine the plan.");
           queryClient.setQueryData(getGetProjectQueryKey(projectId), (old: any) =>
             old ? { ...old, status: "awaiting_clarification" } : old
           );
         } else if (event.type === "planning") {
           setGenerationPhase("planning");
+          appendLog("plan", "Architect drafting blueprint…");
         } else if (event.type === "planning_chunk") {
+          if (!planChunkSeen) {
+            planChunkSeen = true;
+            appendLog("plan", "Streaming plan tokens…");
+          }
           setPlanAccumulatedChunks(prev => {
             const next = prev + event.chunk;
             setPartialPlan(parsePartialPlan(next));
             return next;
           });
         } else if (event.type === "plan") {
-          setLivePlan(event.plan as ArchitecturePlan);
-          setEditedPlan(event.plan as ArchitecturePlan);
+          const plan = event.plan as ArchitecturePlan;
+          setLivePlan(plan);
+          setEditedPlan(plan);
+          appendLog(
+            "plan",
+            `Plan ready — ${plan.screens?.length ?? 0} screens, ${plan.models?.length ?? 0} models, ${plan.fileList?.length ?? 0} files.`,
+          );
         } else if (event.type === "awaiting_approval") {
           setGenerationPhase("awaiting_approval");
           setPlanPanelCollapsed(false);
+          appendLog("plan", "Awaiting your approval — review the plan and click “Approve & build”.");
           queryClient.setQueryData(getGetProjectQueryKey(projectId), (old: any) =>
             old ? { ...old, status: "awaiting_approval" } : old
           );
         } else if (event.type === "error" || event.error) {
           setGenerationPhase("idle");
+          appendLog("error", event.message || event.error || "Generation failed.");
           toast({
             title: "Generation Error",
             description: event.message || event.error || "Generation failed",
@@ -278,6 +318,9 @@ export default function ProjectDetail() {
     setPreviewAvailable(false);
     setIsGeneratingPreview(false);
     setViewMode("code");
+    setTerminalDismissed(false);
+    if (buildStartRef.current === null) buildStartRef.current = Date.now();
+    appendLog("info", "Plan approved — starting synthesis.");
     queryClient.setQueryData(getGetProjectQueryKey(projectId), (old: any) =>
       old ? { ...old, status: "generating", livePreviewHtml: null } : old
     );
@@ -291,23 +334,64 @@ export default function ProjectDetail() {
 
       if (!response.ok) throw new Error("Approve plan request failed");
 
+      let progressLogged = false;
       await consumeSseStream(response, (event) => {
         if (event.type === "building") {
           setGenerationPhase("building");
+          appendLog("build", "Synthesizing source code…");
+        } else if (event.type === "progress") {
+          if (!progressLogged) {
+            progressLogged = true;
+            appendLog("build", "Streaming Swift output from the model…");
+          }
+        } else if (event.type === "parsing") {
+          appendLog("build", "Parsing generated files…");
         } else if (event.type === "validating") {
           setGenerationPhase("validating");
+          appendLog("validate", "Auditing build against the plan…");
         } else if (event.type === "accuracy_report" && event.report) {
-          setAccuracyReport(event.report as AccuracyReport);
+          const report = event.report as AccuracyReport;
+          setAccuracyReport(report);
+          const matched = report.items.filter(i => i.status === "matched").length;
+          const missing = report.items.filter(i => i.status === "missing").length;
+          const offSpec = report.items.filter(i => i.status === "off-spec").length;
+          appendLog(
+            "validate",
+            `Accuracy ${report.overallScore}/100 — ${matched} matched, ${missing} missing, ${offSpec} off-spec.`,
+          );
+        } else if (event.type === "repairing") {
+          const targets = (event.targets as string[] | undefined) ?? [];
+          const head = targets.slice(0, 3).join(", ");
+          const tail = targets.length > 3 ? `, +${targets.length - 3} more` : "";
+          appendLog(
+            "repair",
+            `Regenerating ${targets.length} file${targets.length === 1 ? "" : "s"}${targets.length ? `: ${head}${tail}` : ""}…`,
+          );
         } else if (event.type === "repair_complete") {
           if (event.report) setAccuracyReport(event.report as AccuracyReport);
           if (event.history) setRepairHistory(event.history as RepairHistoryEntry[]);
+          const hist = (event.history as RepairHistoryEntry[] | undefined) ?? [];
+          const last = hist[hist.length - 1];
+          if (last) {
+            appendLog(
+              "repair",
+              `Repair complete — accuracy ${last.before.overallScore} → ${last.after.overallScore}.`,
+            );
+          } else {
+            appendLog("repair", "Repair complete.");
+          }
         } else if (event.type === "preview_generating") {
           setIsGeneratingPreview(true);
           setPreviewAvailable(false);
+          appendLog("preview", "Rendering live phone preview…");
         } else if (event.type === "preview_ready") {
           setIsGeneratingPreview(false);
           setPreviewAvailable(!!event.available);
           if (event.available) setPreviewReloadKey(k => k + 1);
+          appendLog(
+            event.available ? "preview" : "error",
+            event.available ? "Live preview ready." : "Preview unavailable.",
+          );
         } else if (event.done) {
           setGenerationPhase("idle");
           setIsGeneratingPreview(false);
@@ -317,6 +401,8 @@ export default function ProjectDetail() {
           }
           if (event.accuracyReport) setAccuracyReport(event.accuracyReport as AccuracyReport);
           if (event.repairHistory) setRepairHistory(event.repairHistory as RepairHistoryEntry[]);
+          const elapsed = buildStartRef.current ? ((Date.now() - buildStartRef.current) / 1000).toFixed(1) : null;
+          appendLog("done", elapsed ? `Generation complete in ${elapsed}s.` : "Generation complete.");
           queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
           queryClient.invalidateQueries({ queryKey: getGetProjectFilesQueryKey(projectId) });
           toast({
@@ -325,6 +411,7 @@ export default function ProjectDetail() {
           });
         } else if (event.type === "error" || event.error) {
           setGenerationPhase("idle");
+          appendLog("error", event.message || event.error || "Generation failed.");
           toast({
             title: "Generation Error",
             description: event.message || event.error || "Generation failed",
@@ -356,6 +443,13 @@ export default function ProjectDetail() {
     setPartialPlan({ screens: [], models: [], navigation: "" });
     setLivePlan(null);
     setEditedPlan(null);
+    setTerminalDismissed(false);
+    appendLog(
+      "clarify",
+      skip
+        ? "Skipped clarifications — proceeding with original prompt."
+        : `Submitted ${answers.length} answer${answers.length === 1 ? "" : "s"} — re-planning with new context.`,
+    );
     queryClient.setQueryData(getGetProjectQueryKey(projectId), (old: any) =>
       old ? { ...old, status: "generating" } : old
     );
@@ -368,26 +462,39 @@ export default function ProjectDetail() {
       });
       if (!response.ok) throw new Error("Answer submission failed");
 
+      let planChunkSeen = false;
       await consumeSseStream(response, (event) => {
         if (event.type === "planning") {
           setGenerationPhase("planning");
+          appendLog("plan", "Architect drafting blueprint…");
         } else if (event.type === "planning_chunk") {
+          if (!planChunkSeen) {
+            planChunkSeen = true;
+            appendLog("plan", "Streaming plan tokens…");
+          }
           setPlanAccumulatedChunks(prev => {
             const next = prev + event.chunk;
             setPartialPlan(parsePartialPlan(next));
             return next;
           });
         } else if (event.type === "plan") {
-          setLivePlan(event.plan as ArchitecturePlan);
-          setEditedPlan(event.plan as ArchitecturePlan);
+          const plan = event.plan as ArchitecturePlan;
+          setLivePlan(plan);
+          setEditedPlan(plan);
+          appendLog(
+            "plan",
+            `Plan ready — ${plan.screens?.length ?? 0} screens, ${plan.models?.length ?? 0} models, ${plan.fileList?.length ?? 0} files.`,
+          );
         } else if (event.type === "awaiting_approval") {
           setGenerationPhase("awaiting_approval");
           setPlanPanelCollapsed(false);
+          appendLog("plan", "Awaiting your approval — review the plan and click “Approve & build”.");
           queryClient.setQueryData(getGetProjectQueryKey(projectId), (old: any) =>
             old ? { ...old, status: "awaiting_approval" } : old
           );
         } else if (event.type === "error" || event.error) {
           setGenerationPhase("idle");
+          appendLog("error", event.message || event.error || "Planning failed.");
           toast({
             title: "Planning Error",
             description: event.message || event.error || "Failed",
@@ -834,35 +941,31 @@ export default function ProjectDetail() {
               />
             ) : (
               <>
-            {/* Generation overlay — two-phase messaging */}
-            {isActivelyGenerating && (
-              <div className="absolute inset-0 bg-background/50 backdrop-blur-sm z-20 flex flex-col items-center justify-center">
-                <div className="h-16 w-16 mb-4 relative">
-                  <div className="absolute inset-0 rounded-full border-t-2 border-primary animate-spin"></div>
-                  <div className="absolute inset-2 rounded-full border-r-2 border-primary/50 animate-spin animation-delay-150"></div>
-                  <div className="absolute inset-4 rounded-full border-b-2 border-primary/25 animate-spin animation-delay-300"></div>
-                  {generationPhase === "planning" ? (
-                    <Layers className="absolute inset-0 m-auto h-6 w-6 text-blue-400 animate-pulse" />
-                  ) : (
-                    <Cpu className="absolute inset-0 m-auto h-6 w-6 text-primary animate-pulse" />
-                  )}
-                </div>
-                {generationPhase === "planning" ? (
-                  <>
-                    <h3 className="text-lg font-mono font-bold text-foreground">DESIGNING ARCHITECTURE</h3>
-                    <p className="text-sm font-mono text-muted-foreground mt-2 max-w-md text-center">
-                      Planning screens, data models, and navigation flow...
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <h3 className="text-lg font-mono font-bold text-foreground">SYNTHESIZING SOURCE CODE</h3>
-                    <p className="text-sm font-mono text-muted-foreground mt-2 max-w-md text-center">
-                      Compiling {project?.framework} views, models, project.yml, and Info.plist...
-                    </p>
-                  </>
-                )}
+            {/* Generation overlay — live terminal of agent thoughts */}
+            {(isActivelyGenerating || (terminalLines.length > 0 && !terminalDismissed)) && (
+              <div className="absolute inset-0 z-20 flex flex-col bg-background/85 backdrop-blur-sm p-3 sm:p-4 md:p-6">
+                <BuildTerminal
+                  lines={terminalLines}
+                  active={isActivelyGenerating}
+                  onClose={isActivelyGenerating ? undefined : () => setTerminalDismissed(true)}
+                  onClear={isActivelyGenerating ? undefined : () => setTerminalLines([])}
+                  className="flex-1 min-h-0 w-full max-w-3xl mx-auto"
+                />
               </div>
+            )}
+
+            {/* Re-open button when terminal has been dismissed */}
+            {!isActivelyGenerating && terminalLines.length > 0 && terminalDismissed && (
+              <button
+                type="button"
+                onClick={() => setTerminalDismissed(false)}
+                title="Show build log"
+                data-testid="btn-show-terminal"
+                className="absolute bottom-3 right-3 z-10 flex items-center gap-1.5 rounded-md border border-border/60 bg-background/90 px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-wider text-muted-foreground shadow-lg backdrop-blur transition-colors hover:text-foreground"
+              >
+                <TerminalIcon className="h-3.5 w-3.5" strokeWidth={1.75} />
+                Build log
+              </button>
             )}
 
             {selectedFile ? (
