@@ -162,7 +162,7 @@ paths:
     post:
       operationId: generateApp
       tags: [generate]
-      summary: Generate iOS app code from a prompt (streaming)
+      summary: Generate iOS app architecture plan (Phase 1, streaming). Pauses for approval before code generation.
       parameters:
         - name: id
           in: path
@@ -177,7 +177,32 @@ paths:
               $ref: "#/components/schemas/GenerateAppBody"
       responses:
         "200":
-          description: SSE stream of generated code
+          description: SSE stream — emits planning_chunk, plan, then awaiting_approval
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  /projects/{id}/approve-plan:
+    post:
+      operationId: approvePlan
+      tags: [generate]
+      summary: Approve (and optionally edit) the architecture plan, then trigger Phase 2 code generation (streaming)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApprovePlanBody"
+      responses:
+        "200":
+          description: SSE stream of Phase 2 code generation
           content:
             text/event-stream:
               schema:
@@ -234,7 +259,7 @@ components:
           type: ["string", "null"]
         status:
           type: string
-          enum: [pending, generating, complete, error]
+          enum: [pending, generating, awaiting_approval, complete, error]
         framework:
           type: string
           enum: [swiftui, uikit]

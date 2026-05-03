@@ -10,7 +10,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import {
   FileCode, Play, RotateCw, AlertTriangle, File, CheckCircle2,
-  Copy, Download, Code2, Cpu, Share2, Check, Layers,
+  Copy, Download, Code2, Cpu, Share2, Check, Layers, Hammer, PencilLine
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -30,10 +30,11 @@ export default function ProjectDetail() {
   const hasTriggeredInitialGeneration = useRef(false);
 
   // Two-phase generation state
-  const [generationPhase, setGenerationPhase] = useState<"idle" | "planning" | "building">("idle");
+  const [generationPhase, setGenerationPhase] = useState<"idle" | "planning" | "awaiting_approval" | "building">("idle");
   const [planAccumulatedChunks, setPlanAccumulatedChunks] = useState("");
   const [partialPlan, setPartialPlan] = useState<PartialPlan>({ screens: [], models: [], navigation: "" });
   const [livePlan, setLivePlan] = useState<ArchitecturePlan | null>(null);
+  const [editedPlan, setEditedPlan] = useState<ArchitecturePlan | null>(null);
   const [planPanelCollapsed, setPlanPanelCollapsed] = useState(false);
 
   const { data: project, isLoading: isLoadingProject, error: projectError } = useGetProject(projectId, {
@@ -50,6 +51,28 @@ export default function ProjectDetail() {
     }
   });
 
+  const consumeSseStream = async (response: Response, onEvent: (event: any) => void) => {
+    if (!response.body) return;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (line.trim().startsWith("data: ")) {
+          try {
+            const event = JSON.parse(line.trim().slice(6));
+            onEvent(event);
+          } catch (_) {}
+        }
+      }
+    }
+  };
+
   const handleGenerate = async () => {
     if (!projectId || isGenerating) return;
     
@@ -58,6 +81,7 @@ export default function ProjectDetail() {
     setPlanAccumulatedChunks("");
     setPartialPlan({ screens: [], models: [], navigation: "" });
     setLivePlan(null);
+    setEditedPlan(null);
     setPlanPanelCollapsed(false);
     hasTriggeredInitialGeneration.current = true;
     
@@ -72,65 +96,96 @@ export default function ProjectDetail() {
         body: JSON.stringify({ additionalContext: null }),
       });
       
-      if (!response.ok) {
-        throw new Error("Generation request failed");
-      }
+      if (!response.ok) throw new Error("Generation request failed");
 
-      if (response.body) {
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          
-          const text = decoder.decode(value);
-          for (const line of text.split("\n")) {
-            if (line.trim().startsWith("data: ")) {
-              try {
-                const event = JSON.parse(line.trim().slice(6));
-                
-                if (event.type === "planning") {
-                  setGenerationPhase("planning");
-                } else if (event.type === "planning_chunk") {
-                  setPlanAccumulatedChunks(prev => {
-                    const next = prev + event.chunk;
-                    setPartialPlan(parsePartialPlan(next));
-                    return next;
-                  });
-                } else if (event.type === "plan") {
-                  setLivePlan(event.plan as ArchitecturePlan);
-                } else if (event.type === "building") {
-                  setGenerationPhase("building");
-                  setPlanPanelCollapsed(true);
-                } else if (event.done) {
-                  setGenerationPhase("idle");
-                  queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
-                  queryClient.invalidateQueries({ queryKey: getGetProjectFilesQueryKey(projectId) });
-                  toast({
-                    title: "Generation Complete",
-                    description: "Project source code has been synthesized.",
-                  });
-                } else if (event.type === "error" || event.error) {
-                  setGenerationPhase("idle");
-                  toast({
-                    title: "Generation Error",
-                    description: event.message || event.error || "Generation failed",
-                    variant: "destructive"
-                  });
-                  queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
-                }
-              } catch(e) {}
-            }
-          }
+      await consumeSseStream(response, (event) => {
+        if (event.type === "planning") {
+          setGenerationPhase("planning");
+        } else if (event.type === "planning_chunk") {
+          setPlanAccumulatedChunks(prev => {
+            const next = prev + event.chunk;
+            setPartialPlan(parsePartialPlan(next));
+            return next;
+          });
+        } else if (event.type === "plan") {
+          setLivePlan(event.plan as ArchitecturePlan);
+          setEditedPlan(event.plan as ArchitecturePlan);
+        } else if (event.type === "awaiting_approval") {
+          setGenerationPhase("awaiting_approval");
+          setPlanPanelCollapsed(false);
+          queryClient.setQueryData(getGetProjectQueryKey(projectId), (old: any) =>
+            old ? { ...old, status: "awaiting_approval" } : old
+          );
+        } else if (event.type === "error" || event.error) {
+          setGenerationPhase("idle");
+          toast({
+            title: "Generation Error",
+            description: event.message || event.error || "Generation failed",
+            variant: "destructive"
+          });
+          queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
         }
-      }
+      });
     } catch (error) {
-      console.error(error);
       setGenerationPhase("idle");
       toast({
         title: "Connection Error",
         description: "Failed to stream generation updates.",
+        variant: "destructive"
+      });
+      queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleApprovePlan = async () => {
+    if (!projectId || isGenerating) return;
+    const planToSend = editedPlan ?? livePlan;
+    if (!planToSend) return;
+
+    setIsGenerating(true);
+    setGenerationPhase("building");
+    setPlanPanelCollapsed(true);
+    queryClient.setQueryData(getGetProjectQueryKey(projectId), (old: any) =>
+      old ? { ...old, status: "generating" } : old
+    );
+
+    try {
+      const response = await fetch(`/api/projects/${projectId}/approve-plan`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan: planToSend, additionalContext: null }),
+      });
+
+      if (!response.ok) throw new Error("Approve plan request failed");
+
+      await consumeSseStream(response, (event) => {
+        if (event.type === "building") {
+          setGenerationPhase("building");
+        } else if (event.done) {
+          setGenerationPhase("idle");
+          queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
+          queryClient.invalidateQueries({ queryKey: getGetProjectFilesQueryKey(projectId) });
+          toast({
+            title: "Generation Complete",
+            description: "Project source code has been synthesized.",
+          });
+        } else if (event.type === "error" || event.error) {
+          setGenerationPhase("idle");
+          toast({
+            title: "Generation Error",
+            description: event.message || event.error || "Generation failed",
+            variant: "destructive"
+          });
+          queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
+        }
+      });
+    } catch (error) {
+      setGenerationPhase("idle");
+      toast({
+        title: "Connection Error",
+        description: "Failed to stream code generation.",
         variant: "destructive"
       });
       queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
@@ -152,10 +207,16 @@ export default function ProjectDetail() {
       try {
         const parsed = JSON.parse(project.architecturePlan) as ArchitecturePlan;
         setLivePlan(parsed);
-        setPlanPanelCollapsed(true);
+        setEditedPlan(parsed);
+        if (project.status === "awaiting_approval") {
+          setGenerationPhase("awaiting_approval");
+          setPlanPanelCollapsed(false);
+        } else {
+          setPlanPanelCollapsed(true);
+        }
       } catch (_) {}
     }
-  }, [project?.architecturePlan, isGenerating]);
+  }, [project?.architecturePlan, project?.status, isGenerating]);
 
   // Auto-select first file when loaded
   useEffect(() => {
@@ -217,12 +278,21 @@ export default function ProjectDetail() {
   }
 
   const isActivelyGenerating = isGenerating || project?.status === 'generating';
+  const isAwaitingApproval = generationPhase === "awaiting_approval" || (!isGenerating && project?.status === "awaiting_approval");
   const statusBadge = () => {
     if (generationPhase === "planning") {
       return (
         <span className="px-2 py-0.5 rounded text-[10px] font-mono uppercase bg-blue-500/10 text-blue-400 border border-blue-500/20 flex items-center gap-1 animate-pulse">
           <span className="h-1.5 w-1.5 rounded-full bg-blue-400 inline-block animate-ping"></span>
           Planning...
+        </span>
+      );
+    }
+    if (isAwaitingApproval) {
+      return (
+        <span className="px-2 py-0.5 rounded text-[10px] font-mono uppercase bg-amber-500/10 text-amber-400 border border-amber-500/30 flex items-center gap-1">
+          <PencilLine className="h-3 w-3" />
+          Review Plan
         </span>
       );
     }
@@ -300,10 +370,22 @@ export default function ProjectDetail() {
                 </Button>
               </>
             )}
+            {isAwaitingApproval && (
+              <Button
+                size="sm"
+                variant="default"
+                disabled={isGenerating}
+                onClick={handleApprovePlan}
+                className="gap-2 font-mono hover-elevate text-xs bg-amber-500 hover:bg-amber-600 text-black border-0"
+                data-testid="btn-approve-plan"
+              >
+                <Hammer className="h-3 w-3" /> Approve &amp; Build
+              </Button>
+            )}
             <Button 
               size="sm" 
-              variant={project?.status === 'complete' ? "outline" : "default"}
-              disabled={isActivelyGenerating || isLoadingProject}
+              variant={project?.status === 'complete' ? "outline" : isAwaitingApproval ? "outline" : "default"}
+              disabled={isActivelyGenerating || isLoadingProject || isAwaitingApproval}
               onClick={handleGenerate}
               className="gap-2 font-mono hover-elevate text-xs"
               data-testid="btn-generate"
@@ -312,6 +394,8 @@ export default function ProjectDetail() {
                 <><RotateCw className="h-3 w-3 animate-spin" /> Working...</>
               ) : project?.status === 'complete' || project?.status === 'error' ? (
                 <><RotateCw className="h-3 w-3" /> Regenerate</>
+              ) : isAwaitingApproval ? (
+                <><RotateCw className="h-3 w-3" /> Re-plan</>
               ) : (
                 <><Play className="h-3 w-3 fill-current" /> Start Build</>
               )}
@@ -326,6 +410,9 @@ export default function ProjectDetail() {
           partialPlan={partialPlan}
           collapsed={planPanelCollapsed}
           onToggle={() => setPlanPanelCollapsed(prev => !prev)}
+          editable={isAwaitingApproval}
+          editedPlan={editedPlan}
+          onEditedPlanChange={setEditedPlan}
         />
 
         <div className="flex flex-1 overflow-hidden">
@@ -343,7 +430,7 @@ export default function ProjectDetail() {
                 </div>
               ) : files?.length === 0 ? (
                 <div className="px-4 py-8 text-center text-sm text-muted-foreground font-mono">
-                  {isActivelyGenerating ? 'Awaiting output stream...' : 'No files generated.'}
+                  {isActivelyGenerating ? 'Awaiting output stream...' : isAwaitingApproval ? 'Approve plan to generate files.' : 'No files generated.'}
                 </div>
               ) : (
                 <div className="flex flex-col">

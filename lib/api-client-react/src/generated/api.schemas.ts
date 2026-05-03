@@ -14,6 +14,7 @@ export type ProjectStatus = (typeof ProjectStatus)[keyof typeof ProjectStatus];
 export const ProjectStatus = {
   pending: "pending",
   generating: "generating",
+  awaiting_approval: "awaiting_approval",
   complete: "complete",
   error: "error",
 } as const;

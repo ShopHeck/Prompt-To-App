@@ -1,4 +1,4 @@
-import { Layers, Database, Navigation, Package, ChevronDown, ChevronRight } from "lucide-react";
+import { Layers, Database, Navigation, Package, ChevronDown, ChevronRight, PencilLine, Trash2, Plus } from "lucide-react";
 
 export interface SpmDependency {
   url: string;
@@ -54,17 +54,29 @@ export function parsePartialPlan(raw: string): PartialPlan {
   return { screens, models, navigation };
 }
 
-interface PlanPanelProps {
+export interface PlanPanelProps {
   plan: ArchitecturePlan | null;
   isStreaming?: boolean;
   partialPlan?: PartialPlan;
   collapsed: boolean;
   onToggle: () => void;
+  editable?: boolean;
+  editedPlan?: ArchitecturePlan | null;
+  onEditedPlanChange?: (plan: ArchitecturePlan) => void;
 }
 
 const EMPTY_PARTIAL: PartialPlan = { screens: [], models: [], navigation: "" };
 
-export function PlanPanel({ plan, isStreaming = false, partialPlan = EMPTY_PARTIAL, collapsed, onToggle }: PlanPanelProps) {
+export function PlanPanel({
+  plan,
+  isStreaming = false,
+  partialPlan = EMPTY_PARTIAL,
+  collapsed,
+  onToggle,
+  editable,
+  editedPlan,
+  onEditedPlanChange,
+}: PlanPanelProps) {
   if (!plan && !isStreaming) return null;
 
   const displayScreens = plan
@@ -78,14 +90,47 @@ export function PlanPanel({ plan, isStreaming = false, partialPlan = EMPTY_PARTI
   const displayNavigation = plan ? plan.navigation : partialPlan.navigation;
   const hasPartialData = partialPlan.screens.length > 0 || partialPlan.models.length > 0 || partialPlan.navigation.length > 0;
 
+  const activePlan = editable ? (editedPlan ?? plan) : plan;
+
+  const updateScreen = (i: number, field: "name" | "purpose", value: string) => {
+    if (!activePlan || !onEditedPlanChange) return;
+    const screens = activePlan.screens.map((s, idx) => idx === i ? { ...s, [field]: value } : s);
+    onEditedPlanChange({ ...activePlan, screens });
+  };
+  const removeScreen = (i: number) => {
+    if (!activePlan || !onEditedPlanChange) return;
+    onEditedPlanChange({ ...activePlan, screens: activePlan.screens.filter((_, idx) => idx !== i) });
+  };
+  const addScreen = () => {
+    if (!activePlan || !onEditedPlanChange) return;
+    onEditedPlanChange({ ...activePlan, screens: [...activePlan.screens, { name: "NewScreen", purpose: "Describe this screen" }] });
+  };
+  const updateModel = (i: number, value: string) => {
+    if (!activePlan || !onEditedPlanChange) return;
+    const models = activePlan.models.map((m, idx) => idx === i ? { ...m, name: value } : m);
+    onEditedPlanChange({ ...activePlan, models });
+  };
+  const removeModel = (i: number) => {
+    if (!activePlan || !onEditedPlanChange) return;
+    onEditedPlanChange({ ...activePlan, models: activePlan.models.filter((_, idx) => idx !== i) });
+  };
+  const addModel = () => {
+    if (!activePlan || !onEditedPlanChange) return;
+    onEditedPlanChange({ ...activePlan, models: [...activePlan.models, { name: "NewModel", fields: [] }] });
+  };
+  const updateNavigation = (value: string) => {
+    if (!activePlan || !onEditedPlanChange) return;
+    onEditedPlanChange({ ...activePlan, navigation: value });
+  };
+
   return (
-    <div className="border-b border-border bg-card/60 shrink-0">
+    <div className={`border-b border-border shrink-0 ${editable ? "bg-amber-950/20 border-amber-500/30" : "bg-card/60"}`}>
       <button
         onClick={onToggle}
         className="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-secondary/30 transition-colors"
       >
         <div className="flex items-center gap-2 flex-1 min-w-0">
-          <Layers className="h-3.5 w-3.5 text-primary shrink-0" />
+          <Layers className={`h-3.5 w-3.5 shrink-0 ${editable ? "text-amber-400" : "text-primary"}`} />
           <span className="text-xs font-mono font-bold text-foreground uppercase tracking-widest">
             Architecture Plan
           </span>
@@ -95,7 +140,13 @@ export function PlanPanel({ plan, isStreaming = false, partialPlan = EMPTY_PARTI
               Planning...
             </span>
           )}
-          {!isStreaming && plan && (
+          {editable && (
+            <span className="px-2 py-0.5 rounded text-[10px] font-mono uppercase bg-amber-500/10 text-amber-400 border border-amber-500/30 flex items-center gap-1">
+              <PencilLine className="h-2.5 w-2.5" />
+              Review &amp; Edit
+            </span>
+          )}
+          {!isStreaming && !editable && plan && (
             <span className="text-[10px] font-mono text-muted-foreground ml-1">
               {plan.screens.length} screens · {plan.models.length} models · {plan.fileList.length} files
             </span>
@@ -109,7 +160,99 @@ export function PlanPanel({ plan, isStreaming = false, partialPlan = EMPTY_PARTI
 
       {!collapsed && (
         <div className="px-4 pb-4">
-          {(plan || hasPartialData) ? (
+          {editable && activePlan ? (
+            <div className="mt-1 space-y-3">
+              <p className="text-[11px] font-mono text-amber-400/80">
+                Review the plan below. Edit screen names, models, or navigation before building — then click <strong>Approve &amp; Build</strong>.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="bg-background/60 rounded border border-amber-500/20 p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-1.5">
+                      <Layers className="h-3 w-3 text-primary" />
+                      <span className="text-[10px] font-mono font-bold text-primary uppercase tracking-widest">Screens</span>
+                    </div>
+                    <button onClick={addScreen} className="text-[10px] text-muted-foreground hover:text-primary flex items-center gap-0.5 transition-colors">
+                      <Plus className="h-3 w-3" /> Add
+                    </button>
+                  </div>
+                  <ul className="space-y-2">
+                    {activePlan.screens.map((s, i) => (
+                      <li key={i} className="group">
+                        <div className="flex items-center gap-1">
+                          <input
+                            value={s.name}
+                            onChange={e => updateScreen(i, "name", e.target.value)}
+                            className="flex-1 text-xs font-mono font-semibold bg-background/80 border border-border/50 rounded px-1.5 py-0.5 text-foreground focus:outline-none focus:border-primary/60"
+                          />
+                          <button onClick={() => removeScreen(i)} className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all">
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                        <input
+                          value={s.purpose}
+                          onChange={e => updateScreen(i, "purpose", e.target.value)}
+                          className="mt-0.5 w-full text-[10px] font-mono bg-background/60 border border-border/30 rounded px-1.5 py-0.5 text-muted-foreground focus:outline-none focus:border-primary/40"
+                          placeholder="Screen purpose..."
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div className="bg-background/60 rounded border border-amber-500/20 p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-1.5">
+                      <Database className="h-3 w-3 text-blue-400" />
+                      <span className="text-[10px] font-mono font-bold text-blue-400 uppercase tracking-widest">Models</span>
+                    </div>
+                    <button onClick={addModel} className="text-[10px] text-muted-foreground hover:text-blue-400 flex items-center gap-0.5 transition-colors">
+                      <Plus className="h-3 w-3" /> Add
+                    </button>
+                  </div>
+                  <ul className="space-y-2">
+                    {activePlan.models.map((m, i) => (
+                      <li key={i} className="group flex items-center gap-1">
+                        <input
+                          value={m.name}
+                          onChange={e => updateModel(i, e.target.value)}
+                          className="flex-1 text-xs font-mono font-semibold bg-background/80 border border-border/50 rounded px-1.5 py-0.5 text-foreground focus:outline-none focus:border-blue-400/60"
+                        />
+                        <button onClick={() => removeModel(i)} className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all">
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  {activePlan.spmDependencies && activePlan.spmDependencies.length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-border/30">
+                      <div className="flex items-center gap-1 mb-1">
+                        <Package className="h-3 w-3 text-orange-400" />
+                        <span className="text-[10px] font-mono text-orange-400">SPM Deps</span>
+                      </div>
+                      {activePlan.spmDependencies.map((d, i) => (
+                        <span key={i} className="text-[10px] font-mono text-muted-foreground block truncate">{d.packageName}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-background/60 rounded border border-amber-500/20 p-3">
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <Navigation className="h-3 w-3 text-green-400" />
+                    <span className="text-[10px] font-mono font-bold text-green-400 uppercase tracking-widest">Navigation</span>
+                  </div>
+                  <textarea
+                    value={activePlan.navigation}
+                    onChange={e => updateNavigation(e.target.value)}
+                    rows={4}
+                    className="w-full text-xs font-mono bg-background/80 border border-border/50 rounded px-1.5 py-1 text-muted-foreground focus:outline-none focus:border-green-400/60 resize-none leading-relaxed"
+                    placeholder="Describe the navigation flow..."
+                  />
+                </div>
+              </div>
+            </div>
+          ) : (plan || hasPartialData) ? (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-1">
               <div className="bg-background/60 rounded border border-border/50 p-3">
                 <div className="flex items-center gap-1.5 mb-2">

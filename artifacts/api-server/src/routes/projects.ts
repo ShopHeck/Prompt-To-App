@@ -10,6 +10,8 @@ import {
   GetProjectFilesParams,
   GenerateAppParams,
   GenerateAppBody,
+  ApprovePlanParams,
+  ApprovePlanBody,
 } from "@workspace/api-zod";
 import { openai } from "@workspace/integrations-openai-ai-server";
 
@@ -542,14 +544,74 @@ Produce the JSON architecture plan now.`;
     const planJson = JSON.stringify(architecturePlan);
     await db
       .update(projectsTable)
-      .set({ architecturePlan: planJson })
+      .set({ architecturePlan: planJson, status: "awaiting_approval" })
       .where(eq(projectsTable.id, id));
     sendEvent({ type: "plan", plan: architecturePlan });
 
-    // ── PHASE 2: Code Generation ─────────────────────────────────────────────
+    // ── PAUSE: Awaiting user approval before Phase 2 ─────────────────────────
+    sendEvent({ type: "awaiting_approval", plan: architecturePlan });
+    res.end();
+  } catch (err) {
+    req.log.error({ err }, "Generation failed");
+    try {
+      await db
+        .update(projectsTable)
+        .set({ status: "error" })
+        .where(eq(projectsTable.id, id));
+    } catch (_) {}
+    sendEvent({ type: "error", message: "Generation failed" });
+    res.end();
+  }
+});
+
+// POST /projects/:id/approve-plan  (SSE streaming — Phase 2: code generation with approved plan)
+router.post("/projects/:id/approve-plan", async (req, res) => {
+  const { id } = ApprovePlanParams.parse(req.params);
+  const body = ApprovePlanBody.safeParse(req.body);
+
+  if (!body.success) {
+    res.status(400).json({ error: "Invalid request body", details: body.error.issues });
+    return;
+  }
+
+  const { plan: approvedPlan, additionalContext } = body.data;
+
+  // Set SSE headers
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  const sendEvent = (data: object) => {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  try {
+    const [project] = await db
+      .select()
+      .from(projectsTable)
+      .where(eq(projectsTable.id, id));
+
+    if (!project) {
+      sendEvent({ type: "error", message: "Project not found" });
+      res.end();
+      return;
+    }
+
+    // Mark as generating
+    await db
+      .update(projectsTable)
+      .set({ status: "generating", architecturePlan: JSON.stringify(approvedPlan) })
+      .where(eq(projectsTable.id, id));
+
+    const frameworkName = project.framework === "swiftui" ? "SwiftUI" : "UIKit";
+    const contextBlock = additionalContext
+      ? `\nAdditional context from the user: ${additionalContext}`
+      : "";
+
     sendEvent({ type: "building", message: "Synthesizing source code..." });
 
-    // Sanitize to a valid Swift module/target name: letters+digits only, must start with a letter
+    // Sanitize to a valid Swift module/target name
     const rawTarget = project.name.replace(/[^a-zA-Z0-9]/g, "");
     const appTargetName = rawTarget.length === 0
       ? "App"
@@ -557,8 +619,8 @@ Produce the JSON architecture plan now.`;
         ? `App${rawTarget}`
         : rawTarget;
 
-    // Serialize SPM deps for the prompt (each dep is an object, not a string)
-    const validDeps = (architecturePlan.spmDependencies ?? [])
+    // Serialize SPM deps for the prompt
+    const validDeps = (approvedPlan.spmDependencies ?? [])
       .filter(
         d => d && typeof d.url === "string" && typeof d.packageName === "string" &&
              Array.isArray(d.productNames) && typeof d.version === "string",
@@ -576,13 +638,12 @@ Produce the JSON architecture plan now.`;
       ? `SPM dependencies:\n${validDeps.map(d => `  - ${d.packageName} (${d.url}) products: ${d.productNames.join(", ")} version: ${d.version}`).join("\n")}`
       : "No external SPM dependencies needed — use only Apple frameworks.";
 
-    // Build plan context block
     const planContextBlock = `
 Architecture Plan (follow this exactly):
-- Screens: ${architecturePlan.screens.map(s => `${s.name} (${s.purpose})`).join(", ")}
-- Data Models: ${architecturePlan.models.map(m => m.name).join(", ")}
-- Navigation: ${architecturePlan.navigation}
-- Planned files: ${architecturePlan.fileList.map(f => f.filename).join(", ")}
+- Screens: ${approvedPlan.screens.map(s => `${s.name} (${s.purpose})`).join(", ")}
+- Data Models: ${approvedPlan.models.map(m => m.name).join(", ")}
+- Navigation: ${approvedPlan.navigation}
+- Planned files: ${approvedPlan.fileList.map(f => f.filename).join(", ")}
 ${spmDepsBlock}
 `;
 
@@ -648,7 +709,6 @@ Generate all necessary files including Package.swift and Info.plist for a compil
       }
     }
 
-    // Parse the JSON response
     sendEvent({ type: "parsing", message: "Parsing generated files..." });
 
     let parsed: { files: Array<{ filename: string; filepath: string; content: string; language: string }>; description?: string };
@@ -658,10 +718,7 @@ Generate all necessary files including Package.swift and Info.plist for a compil
       parsed = JSON.parse(jsonMatch[0]);
     } catch (parseErr) {
       req.log.error({ parseErr }, "Failed to parse AI response");
-      await db
-        .update(projectsTable)
-        .set({ status: "error" })
-        .where(eq(projectsTable.id, id));
+      await db.update(projectsTable).set({ status: "error" }).where(eq(projectsTable.id, id));
       sendEvent({ type: "error", message: "Failed to parse generated code" });
       res.end();
       return;
@@ -687,11 +744,8 @@ Generate all necessary files including Package.swift and Info.plist for a compil
     }
 
     // Delete old files if regenerating
-    await db
-      .delete(projectFilesTable)
-      .where(eq(projectFilesTable.projectId, id));
+    await db.delete(projectFilesTable).where(eq(projectFilesTable.projectId, id));
 
-    // Insert all generated files (using the normalized/validated set)
     const filesToInsert = normalizedFiles.map((f) => ({
       projectId: id,
       filename: f.filename,
@@ -704,7 +758,6 @@ Generate all necessary files including Package.swift and Info.plist for a compil
       await db.insert(projectFilesTable).values(filesToInsert);
     }
 
-    // Update project status and file count
     await db
       .update(projectsTable)
       .set({
@@ -722,14 +775,11 @@ Generate all necessary files including Package.swift and Info.plist for a compil
     });
     res.end();
   } catch (err) {
-    req.log.error({ err }, "Generation failed");
+    req.log.error({ err }, "Approve-plan phase 2 generation failed");
     try {
-      await db
-        .update(projectsTable)
-        .set({ status: "error" })
-        .where(eq(projectsTable.id, id));
+      await db.update(projectsTable).set({ status: "error" }).where(eq(projectsTable.id, id));
     } catch (_) {}
-    sendEvent({ type: "error", message: "Generation failed" });
+    sendEvent({ type: "error", message: "Code generation failed" });
     res.end();
   }
 });

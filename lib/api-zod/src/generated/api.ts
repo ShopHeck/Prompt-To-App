@@ -23,7 +23,7 @@ export const ListProjectsResponseItem = zod.object({
   name: zod.string(),
   prompt: zod.string(),
   description: zod.string().nullable(),
-  status: zod.enum(["pending", "generating", "complete", "error"]),
+  status: zod.enum(["pending", "generating", "awaiting_approval", "complete", "error"]),
   framework: zod.enum(["swiftui", "uikit"]),
   fileCount: zod.number(),
   createdAt: zod.string(),
@@ -52,7 +52,7 @@ export const GetProjectResponse = zod.object({
   name: zod.string(),
   prompt: zod.string(),
   description: zod.string().nullable(),
-  status: zod.enum(["pending", "generating", "complete", "error"]),
+  status: zod.enum(["pending", "generating", "awaiting_approval", "complete", "error"]),
   framework: zod.enum(["swiftui", "uikit"]),
   fileCount: zod.number(),
   createdAt: zod.string(),
@@ -96,6 +96,29 @@ export const GenerateAppBody = zod.object({
 });
 
 /**
+ * @summary Approve plan and trigger Phase 2 code generation (streaming)
+ */
+export const ApprovePlanParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const ApprovePlanBody = zod.object({
+  plan: zod.object({
+    screens: zod.array(zod.object({ name: zod.string(), purpose: zod.string() })),
+    models: zod.array(zod.object({ name: zod.string(), fields: zod.array(zod.string()) })),
+    navigation: zod.string(),
+    spmDependencies: zod.array(zod.object({
+      url: zod.string(),
+      packageName: zod.string(),
+      productNames: zod.array(zod.string()),
+      version: zod.string(),
+    })),
+    fileList: zod.array(zod.object({ filename: zod.string(), purpose: zod.string() })),
+  }),
+  additionalContext: zod.string().nullish(),
+});
+
+/**
  * @summary Get the 5 most recently updated projects
  */
 export const GetRecentProjectsResponseItem = zod.object({
@@ -103,7 +126,7 @@ export const GetRecentProjectsResponseItem = zod.object({
   name: zod.string(),
   prompt: zod.string(),
   description: zod.string().nullable(),
-  status: zod.enum(["pending", "generating", "complete", "error"]),
+  status: zod.enum(["pending", "generating", "awaiting_approval", "complete", "error"]),
   framework: zod.enum(["swiftui", "uikit"]),
   fileCount: zod.number(),
   createdAt: zod.string(),
