@@ -12,8 +12,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   FileCode, Play, RotateCw, AlertTriangle, File, CheckCircle2,
   Copy, Download, Code2, Cpu, Share2, Check, Layers, Hammer, PencilLine,
-  FolderTree
+  FolderTree, Smartphone
 } from "lucide-react";
+import { PhonePreview } from "@/components/phone-preview";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle, SheetClose } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -146,6 +147,12 @@ export default function ProjectDetail() {
   const [accuracyReport, setAccuracyReport] = useState<AccuracyReport | null>(null);
   const [repairHistory, setRepairHistory] = useState<RepairHistoryEntry[]>([]);
 
+  // Live preview state
+  const [viewMode, setViewMode] = useState<"code" | "preview">("code");
+  const [isGeneratingPreview, setIsGeneratingPreview] = useState(false);
+  const [previewAvailable, setPreviewAvailable] = useState(false);
+  const [previewReloadKey, setPreviewReloadKey] = useState(0);
+
   const { data: project, isLoading: isLoadingProject, error: projectError } = useGetProject(projectId, {
     query: {
       enabled: !!projectId,
@@ -267,8 +274,11 @@ export default function ProjectDetail() {
     setIsGenerating(true);
     setGenerationPhase("building");
     setPlanPanelCollapsed(true);
+    setPreviewAvailable(false);
+    setIsGeneratingPreview(false);
+    setViewMode("code");
     queryClient.setQueryData(getGetProjectQueryKey(projectId), (old: any) =>
-      old ? { ...old, status: "generating" } : old
+      old ? { ...old, status: "generating", livePreviewHtml: null } : old
     );
 
     try {
@@ -290,8 +300,20 @@ export default function ProjectDetail() {
         } else if (event.type === "repair_complete") {
           if (event.report) setAccuracyReport(event.report as AccuracyReport);
           if (event.history) setRepairHistory(event.history as RepairHistoryEntry[]);
+        } else if (event.type === "preview_generating") {
+          setIsGeneratingPreview(true);
+          setPreviewAvailable(false);
+        } else if (event.type === "preview_ready") {
+          setIsGeneratingPreview(false);
+          setPreviewAvailable(!!event.available);
+          if (event.available) setPreviewReloadKey(k => k + 1);
         } else if (event.done) {
           setGenerationPhase("idle");
+          setIsGeneratingPreview(false);
+          if (typeof event.previewAvailable === "boolean") {
+            setPreviewAvailable(event.previewAvailable);
+            if (event.previewAvailable) setPreviewReloadKey(k => k + 1);
+          }
           if (event.accuracyReport) setAccuracyReport(event.accuracyReport as AccuracyReport);
           if (event.repairHistory) setRepairHistory(event.repairHistory as RepairHistoryEntry[]);
           queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
@@ -448,6 +470,18 @@ export default function ProjectDetail() {
       setSelectedFileId(files[0].id);
     }
   }, [files, selectedFileId]);
+
+  // Detect existing preview availability and default the view mode appropriately
+  const initialPreviewModeApplied = useRef(false);
+  useEffect(() => {
+    if (!project) return;
+    const hasPreview = !!project.livePreviewHtml;
+    setPreviewAvailable(hasPreview);
+    if (hasPreview && project.status === "complete" && !initialPreviewModeApplied.current) {
+      setViewMode("preview");
+      initialPreviewModeApplied.current = true;
+    }
+  }, [project?.livePreviewHtml, project?.status]);
 
   const selectedFile = files?.find(f => f.id === selectedFileId);
 
@@ -713,8 +747,61 @@ export default function ProjectDetail() {
             />
           </div>
 
-          {/* Code Viewer Area */}
+          {/* Code / Preview Viewer Area */}
           <div className="flex-1 flex flex-col bg-[#1E1E1E] overflow-hidden relative">
+            {/* View mode toggle */}
+            {(previewAvailable || isGeneratingPreview || project?.status === "complete") && (
+              <div className="h-9 flex items-center gap-1 border-b border-border/40 bg-background/80 px-3 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setViewMode("code")}
+                  data-testid="btn-view-code"
+                  className={`flex items-center gap-1.5 rounded px-2.5 py-1 font-mono text-[11px] uppercase tracking-wide transition-colors ${
+                    viewMode === "code"
+                      ? "bg-primary/10 text-primary"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Code2 className="h-3 w-3" /> Code
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("preview")}
+                  data-testid="btn-view-preview"
+                  disabled={!previewAvailable && !isGeneratingPreview}
+                  className={`flex items-center gap-1.5 rounded px-2.5 py-1 font-mono text-[11px] uppercase tracking-wide transition-colors disabled:opacity-40 ${
+                    viewMode === "preview"
+                      ? "bg-primary/10 text-primary"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Smartphone className="h-3 w-3" /> Preview
+                  {isGeneratingPreview && (
+                    <span className="ml-1 h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
+                  )}
+                </button>
+                {viewMode === "preview" && previewAvailable && (
+                  <button
+                    type="button"
+                    onClick={() => setPreviewReloadKey(k => k + 1)}
+                    title="Reload preview"
+                    className="ml-auto flex items-center gap-1 rounded px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground hover:text-foreground"
+                  >
+                    <RotateCw className="h-3 w-3" /> Reload
+                  </button>
+                )}
+              </div>
+            )}
+
+            {viewMode === "preview" ? (
+              <PhonePreview
+                src={previewAvailable ? `/api/projects/${projectId}/preview` : null}
+                isGenerating={isGeneratingPreview}
+                reloadKey={previewReloadKey}
+                emptyHint="Finish a build to render the live preview here."
+              />
+            ) : (
+              <>
             {/* Generation overlay — two-phase messaging */}
             {isActivelyGenerating && (
               <div className="absolute inset-0 bg-background/50 backdrop-blur-sm z-20 flex flex-col items-center justify-center">
@@ -791,6 +878,8 @@ export default function ProjectDetail() {
                 </p>
               </div>
             ) : null}
+              </>
+            )}
           </div>
         </div>
       </div>

@@ -39,6 +39,7 @@ export const ListProjectsResponseItem = zod.object({
   enrichedPrompt: zod.string().nullable(),
   accuracyReport: zod.string().nullable(),
   repairHistory: zod.string().nullable(),
+  livePreviewHtml: zod.string().nullable(),
   createdAt: zod.string(),
   updatedAt: zod.string(),
 });
@@ -81,6 +82,7 @@ export const GetProjectResponse = zod.object({
   enrichedPrompt: zod.string().nullable(),
   accuracyReport: zod.string().nullable(),
   repairHistory: zod.string().nullable(),
+  livePreviewHtml: zod.string().nullable(),
   createdAt: zod.string(),
   updatedAt: zod.string(),
 });
@@ -151,6 +153,7 @@ export const GetSharedProjectResponse = zod.object({
     enrichedPrompt: zod.string().nullable(),
     accuracyReport: zod.string().nullable(),
     repairHistory: zod.string().nullable(),
+    livePreviewHtml: zod.string().nullable(),
     createdAt: zod.string(),
     updatedAt: zod.string(),
   }),
@@ -238,6 +241,20 @@ export const ApprovePlanBody = zod.object({
 });
 
 /**
+ * @summary Render live HTML preview of the generated app
+ */
+export const GetProjectPreviewParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+/**
+ * @summary Render live HTML preview of a shared project (public)
+ */
+export const GetSharedProjectPreviewParams = zod.object({
+  token: zod.coerce.string(),
+});
+
+/**
  * @summary Get the 5 most recently updated projects
  */
 export const GetRecentProjectsResponseItem = zod.object({
@@ -261,6 +278,7 @@ export const GetRecentProjectsResponseItem = zod.object({
   enrichedPrompt: zod.string().nullable(),
   accuracyReport: zod.string().nullable(),
   repairHistory: zod.string().nullable(),
+  livePreviewHtml: zod.string().nullable(),
   createdAt: zod.string(),
   updatedAt: zod.string(),
 });

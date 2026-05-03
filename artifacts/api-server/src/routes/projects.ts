@@ -210,6 +210,62 @@ router.get("/share/:token", async (req, res) => {
 });
 
 // GET /projects/:id/download  (zip all generated files)
+function sendPreviewHtml(res: import("express").Response, html: string) {
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader(
+    "Content-Security-Policy",
+    [
+      "default-src 'none'",
+      "script-src 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com",
+      "style-src 'unsafe-inline' https://cdn.tailwindcss.com https://fonts.googleapis.com",
+      "font-src https://fonts.gstatic.com data:",
+      "img-src data: blob: https:",
+      "connect-src 'none'",
+      "frame-ancestors 'self'",
+      "base-uri 'none'",
+      "form-action 'none'",
+    ].join("; "),
+  );
+  res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Cache-Control", "no-store");
+  res.send(html);
+}
+
+router.get("/projects/:id/preview", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) {
+      res.status(400).json({ error: "Invalid id" });
+      return;
+    }
+    const [project] = await db.select().from(projectsTable).where(eq(projectsTable.id, id)).limit(1);
+    if (!project || !project.livePreviewHtml) {
+      res.status(404).type("text/html").send("<!doctype html><meta charset=utf-8><title>No preview</title><body style=\"font-family:-apple-system,sans-serif;background:#000;color:#888;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;padding:1rem;font-size:13px;\">Preview not yet available.</body>");
+      return;
+    }
+    sendPreviewHtml(res, project.livePreviewHtml);
+  } catch (err) {
+    req.log.error({ err }, "Failed to load project preview");
+    res.status(500).json({ error: "Failed to load preview" });
+  }
+});
+
+router.get("/share/:token/preview", async (req, res) => {
+  try {
+    const token = req.params.token;
+    const [project] = await db.select().from(projectsTable).where(eq(projectsTable.shareToken, token)).limit(1);
+    if (!project || !project.livePreviewHtml) {
+      res.status(404).type("text/html").send("<!doctype html><meta charset=utf-8><title>No preview</title><body style=\"font-family:-apple-system,sans-serif;background:#000;color:#888;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;padding:1rem;font-size:13px;\">Preview not available.</body>");
+      return;
+    }
+    sendPreviewHtml(res, project.livePreviewHtml);
+  } catch (err) {
+    req.log.error({ err }, "Failed to load shared preview");
+    res.status(500).json({ error: "Failed to load preview" });
+  }
+});
+
 router.get("/projects/:id/download", async (req, res) => {
   try {
     const { id } = GetProjectParams.parse(req.params);
@@ -630,6 +686,85 @@ Output JSON now.`;
   } catch (repairParseErr) {
     reqLog.error({ repairParseErr }, "Failed to parse repair JSON");
     return [];
+  }
+}
+
+async function runLivePreviewGeneration(
+  reqLog: import("pino").Logger | { error: (...args: unknown[]) => void; info?: (...args: unknown[]) => void },
+  appName: string,
+  enrichedPrompt: string,
+  plan: ArchitecturePlan,
+  files: Array<{ filename: string; filepath: string; content: string }>,
+): Promise<string | null> {
+  // Pick UI-relevant files (Views) and clip them to keep the prompt manageable.
+  const viewFiles = files
+    .filter(f => /view|screen|app\.swift$/i.test(f.filename) || f.filepath.toLowerCase().includes("view"))
+    .slice(0, 8);
+  const fallback = viewFiles.length === 0 ? files.filter(f => f.filename.endsWith(".swift")).slice(0, 6) : viewFiles;
+  const fileBlock = fallback
+    .map(f => {
+      const clipped = f.content.length > 1500 ? f.content.slice(0, 1500) + "\n// ...truncated" : f.content;
+      return `// ${f.filepath}\n${clipped}`;
+    })
+    .join("\n\n");
+
+  const navHint = (plan.navigation || "").toLowerCase();
+  const navStyle = /tab/.test(navHint) ? "bottom tab bar" : /stack|push|nav/.test(navHint) ? "navigation stack with back button" : "single screen";
+
+  const systemPrompt = `You are a UI translator. Given an iOS app's plan and SwiftUI source, produce ONE self-contained HTML document that visually approximates the app so it can be embedded in an iframe inside a phone-frame preview.
+
+Hard rules:
+- Output a complete HTML document. Start with <!DOCTYPE html>. No markdown fences. No commentary.
+- Inline ALL styles and scripts. Allowed CDN tags: <script src="https://cdn.tailwindcss.com"></script>.
+- Target a 390x844 viewport. Use mobile-first layout. No horizontal scroll.
+- Use the system font stack: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif.
+- Render an iOS-style status bar (time 9:41, signal/wifi/battery glyphs as inline SVG or unicode) at the top.
+- Implement screen switching with plain vanilla JS (no React, no build step). Use a simple state object that toggles which screen <section> is visible.
+- Include the navigation pattern indicated below: ${navStyle}. For tab bar, render at the bottom with icons + labels. For nav stack, show a header with title and an optional chevron-left back button when not on the root screen.
+- Each screen should render representative content based on its purpose, with realistic mock data. Lists, cards, buttons, form controls — match SwiftUI styling (rounded corners, subtle separators, generous spacing, blue tint #007AFF for actions).
+- Tap targets must work: tapping a list row navigates if appropriate, buttons toggle state where it makes sense.
+- Keep total output under 14000 characters.
+- DO NOT fetch external resources besides Tailwind CDN. No images from external URLs (use CSS gradients or inline SVG placeholders).
+- DO NOT include any explanatory text. Output the HTML only.`;
+
+  const userMessage = `App name: ${appName}
+Original prompt: ${enrichedPrompt}
+
+Architecture plan:
+- screens: ${plan.screens.map(s => `${s.name} — ${s.purpose}`).join("; ")}
+- models: ${plan.models.map(m => `${m.name}{${m.fields.join(",")}}`).join("; ")}
+- navigation: ${plan.navigation}
+
+SwiftUI source (clipped):
+${fileBlock}
+
+Produce the HTML preview now.`;
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-5.4",
+      max_completion_tokens: 6000,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMessage },
+      ],
+    });
+    let raw = completion.choices[0]?.message?.content ?? "";
+    raw = raw.trim();
+    // Strip code fences if AI added them anyway.
+    const fenceMatch = raw.match(/```(?:html)?\s*([\s\S]*?)```/i);
+    if (fenceMatch) raw = fenceMatch[1].trim();
+    // Find the first <!DOCTYPE or <html opening to be safe.
+    const docIdx = raw.search(/<!doctype|<html/i);
+    if (docIdx > 0) raw = raw.slice(docIdx);
+    if (!/<html[\s>]/i.test(raw)) {
+      reqLog.error("Live preview AI output missing <html> tag");
+      return null;
+    }
+    return raw;
+  } catch (err) {
+    reqLog.error({ err }, "Live preview generation failed");
+    return null;
   }
 }
 
@@ -1277,6 +1412,25 @@ Generate all necessary files including Package.swift and Info.plist for a compil
       }
     }
 
+    // ── Live preview generation ─────────────────────────────────────────────
+    sendEvent({ type: "preview_generating", message: "Rendering live preview..." });
+    let livePreviewHtml: string | null = null;
+    try {
+      const finalFiles = await db
+        .select()
+        .from(projectFilesTable)
+        .where(eq(projectFilesTable.projectId, id));
+      livePreviewHtml = await runLivePreviewGeneration(
+        req.log,
+        project.name,
+        promptForValidation,
+        approvedPlan,
+        finalFiles.map(f => ({ filename: f.filename, filepath: f.filepath, content: f.content })),
+      );
+    } catch (previewErr) {
+      req.log.error({ previewErr }, "Live preview generation threw");
+    }
+
     await db
       .update(projectsTable)
       .set({
@@ -1284,9 +1438,11 @@ Generate all necessary files including Package.swift and Info.plist for a compil
         description: parsed.description ?? null,
         accuracyReport: JSON.stringify(report),
         repairHistory: JSON.stringify(repairHistory),
+        livePreviewHtml,
       })
       .where(eq(projectsTable.id, id));
 
+    sendEvent({ type: "preview_ready", available: !!livePreviewHtml });
     sendEvent({
       type: "complete",
       done: true,
@@ -1294,6 +1450,7 @@ Generate all necessary files including Package.swift and Info.plist for a compil
       description: parsed.description,
       accuracyReport: report,
       repairHistory,
+      previewAvailable: !!livePreviewHtml,
     });
     res.end();
   } catch (err) {

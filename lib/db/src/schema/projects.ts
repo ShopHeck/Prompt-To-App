@@ -17,6 +17,7 @@ export const projectsTable = pgTable("projects", {
   enrichedPrompt: text("enriched_prompt"),
   accuracyReport: text("accuracy_report"),
   repairHistory: text("repair_history"),
+  livePreviewHtml: text("live_preview_html"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });

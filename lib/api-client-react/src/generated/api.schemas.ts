@@ -49,6 +49,8 @@ export interface Project {
   accuracyReport: string | null;
   /** @nullable */
   repairHistory: string | null;
+  /** @nullable */
+  livePreviewHtml: string | null;
   createdAt: string;
   updatedAt: string;
 }

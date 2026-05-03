@@ -233,6 +233,48 @@ paths:
               schema:
                 type: string
 
+  /projects/{id}/preview:
+    get:
+      operationId: getProjectPreview
+      tags: [projects]
+      summary: Render live HTML preview of the generated app
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Self-contained HTML preview document
+          content:
+            text/html:
+              schema:
+                type: string
+        "404":
+          description: Not found or preview not yet generated
+
+  /share/{token}/preview:
+    get:
+      operationId: getSharedProjectPreview
+      tags: [projects]
+      summary: Render live HTML preview of a shared project (public)
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Self-contained HTML preview document
+          content:
+            text/html:
+              schema:
+                type: string
+        "404":
+          description: Not found
+
   /projects/recent:
     get:
       operationId: getRecentProjects
@@ -302,6 +344,8 @@ components:
           type: ["string", "null"]
         repairHistory:
           type: ["string", "null"]
+        livePreviewHtml:
+          type: ["string", "null"]
         createdAt:
           type: string
         updatedAt:
@@ -320,6 +364,7 @@ components:
         - enrichedPrompt
         - accuracyReport
         - repairHistory
+        - livePreviewHtml
         - createdAt
         - updatedAt
 

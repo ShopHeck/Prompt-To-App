@@ -967,6 +967,182 @@ export const useApprovePlan = <
 };
 
 /**
+ * @summary Render live HTML preview of the generated app
+ */
+export const getGetProjectPreviewUrl = (id: number) => {
+  return `/api/projects/${id}/preview`;
+};
+
+export const getProjectPreview = async (
+  id: number,
+  options?: RequestInit,
+): Promise<string> => {
+  return customFetch<string>(getGetProjectPreviewUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetProjectPreviewQueryKey = (id: number) => {
+  return [`/api/projects/${id}/preview`] as const;
+};
+
+export const getGetProjectPreviewQueryOptions = <
+  TData = Awaited<ReturnType<typeof getProjectPreview>>,
+  TError = ErrorType<void>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getProjectPreview>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetProjectPreviewQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getProjectPreview>>
+  > = ({ signal }) => getProjectPreview(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getProjectPreview>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetProjectPreviewQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getProjectPreview>>
+>;
+export type GetProjectPreviewQueryError = ErrorType<void>;
+
+/**
+ * @summary Render live HTML preview of the generated app
+ */
+
+export function useGetProjectPreview<
+  TData = Awaited<ReturnType<typeof getProjectPreview>>,
+  TError = ErrorType<void>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getProjectPreview>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetProjectPreviewQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Render live HTML preview of a shared project (public)
+ */
+export const getGetSharedProjectPreviewUrl = (token: string) => {
+  return `/api/share/${token}/preview`;
+};
+
+export const getSharedProjectPreview = async (
+  token: string,
+  options?: RequestInit,
+): Promise<string> => {
+  return customFetch<string>(getGetSharedProjectPreviewUrl(token), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetSharedProjectPreviewQueryKey = (token: string) => {
+  return [`/api/share/${token}/preview`] as const;
+};
+
+export const getGetSharedProjectPreviewQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSharedProjectPreview>>,
+  TError = ErrorType<void>,
+>(
+  token: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSharedProjectPreview>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSharedProjectPreviewQueryKey(token);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSharedProjectPreview>>
+  > = ({ signal }) =>
+    getSharedProjectPreview(token, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!token,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSharedProjectPreview>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSharedProjectPreviewQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSharedProjectPreview>>
+>;
+export type GetSharedProjectPreviewQueryError = ErrorType<void>;
+
+/**
+ * @summary Render live HTML preview of a shared project (public)
+ */
+
+export function useGetSharedProjectPreview<
+  TData = Awaited<ReturnType<typeof getSharedProjectPreview>>,
+  TError = ErrorType<void>,
+>(
+  token: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSharedProjectPreview>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSharedProjectPreviewQueryOptions(token, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
  * @summary Get the 5 most recently updated projects
  */
 export const getGetRecentProjectsUrl = () => {

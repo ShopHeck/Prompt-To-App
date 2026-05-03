@@ -14,7 +14,10 @@ import {
   Code2,
   FolderTree,
   Terminal,
+  Smartphone,
+  RotateCw,
 } from "lucide-react";
+import { PhonePreview } from "@/components/phone-preview";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle, SheetClose } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -48,6 +51,7 @@ interface Project {
   enrichedPrompt: string | null;
   accuracyReport: string | null;
   repairHistory: string | null;
+  livePreviewHtml: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -139,6 +143,8 @@ export default function SharedProject() {
   const [selectedFileId, setSelectedFileId] = useState<number | null>(null);
   const [planCollapsed, setPlanCollapsed] = useState(true);
   const [mobileExplorerOpen, setMobileExplorerOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<"code" | "preview">("code");
+  const [previewReloadKey, setPreviewReloadKey] = useState(0);
 
   const { data, isLoading, error } = useQuery<SharedProjectData>({
     queryKey: ["shared", token],
@@ -152,6 +158,15 @@ export default function SharedProject() {
 
   const project = data?.project;
   const files: ProjectFile[] = data?.files ?? [];
+  const previewAvailable = !!project?.livePreviewHtml;
+
+  const initialPreviewModeApplied = React.useRef(false);
+  React.useEffect(() => {
+    if (previewAvailable && !initialPreviewModeApplied.current) {
+      setViewMode("preview");
+      initialPreviewModeApplied.current = true;
+    }
+  }, [previewAvailable]);
   const selectedFile =
     files.find((f: ProjectFile) => f.id === selectedFileId) ?? files[0];
   const activeId = selectedFileId ?? files[0]?.id;
@@ -345,9 +360,46 @@ export default function SharedProject() {
           />
         </div>
 
-        {/* Code Viewer */}
+        {/* Code / Preview Viewer */}
         <div className="flex flex-1 flex-col overflow-hidden bg-[#1E1E1E]">
-          {selectedFile ? (
+          {previewAvailable && (
+            <div className="h-9 flex items-center gap-1 border-b border-border/40 bg-background/80 px-3 shrink-0">
+              <button
+                type="button"
+                onClick={() => setViewMode("code")}
+                className={`flex items-center gap-1.5 rounded px-2.5 py-1 font-mono text-[11px] uppercase tracking-wide transition-colors ${
+                  viewMode === "code" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Code2 className="h-3 w-3" /> Code
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("preview")}
+                className={`flex items-center gap-1.5 rounded px-2.5 py-1 font-mono text-[11px] uppercase tracking-wide transition-colors ${
+                  viewMode === "preview" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Smartphone className="h-3 w-3" /> Preview
+              </button>
+              {viewMode === "preview" && (
+                <button
+                  type="button"
+                  onClick={() => setPreviewReloadKey((k) => k + 1)}
+                  title="Reload preview"
+                  className="ml-auto flex items-center gap-1 rounded px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground hover:text-foreground"
+                >
+                  <RotateCw className="h-3 w-3" /> Reload
+                </button>
+              )}
+            </div>
+          )}
+          {viewMode === "preview" && previewAvailable ? (
+            <PhonePreview
+              src={`/api/share/${token}/preview`}
+              reloadKey={previewReloadKey}
+            />
+          ) : selectedFile ? (
             <>
               <div className="flex h-10 shrink-0 items-center justify-between border-b border-border/40 bg-background/70 px-4">
                 <div className="flex min-w-0 items-center gap-2 font-mono text-xs text-muted-foreground">
