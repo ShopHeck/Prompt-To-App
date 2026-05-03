@@ -15,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
+import { PlanPanel, type ArchitecturePlan } from "@/components/plan-panel";
 
 interface ProjectFile {
   id: number;
@@ -35,6 +36,7 @@ interface Project {
   framework: string;
   fileCount: number;
   shareToken: string | null;
+  architecturePlan: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -49,6 +51,7 @@ export default function SharedProject() {
   const token = params?.token ?? "";
   const { toast } = useToast();
   const [selectedFileId, setSelectedFileId] = useState<number | null>(null);
+  const [planCollapsed, setPlanCollapsed] = useState(false);
 
   const { data, isLoading, error } = useQuery<SharedProjectData>({
     queryKey: ["shared", token],
@@ -63,6 +66,15 @@ export default function SharedProject() {
   const project = data?.project;
   const files: ProjectFile[] = data?.files ?? [];
   const selectedFile = files.find((f: ProjectFile) => f.id === selectedFileId) ?? files[0];
+
+  const parsedPlan: ArchitecturePlan | null = (() => {
+    if (!project?.architecturePlan) return null;
+    try {
+      return JSON.parse(project.architecturePlan) as ArchitecturePlan;
+    } catch {
+      return null;
+    }
+  })();
 
   const copyToClipboard = () => {
     if (selectedFile?.content) {
@@ -142,6 +154,15 @@ export default function SharedProject() {
             {project.prompt}
           </p>
         </div>
+      )}
+
+      {/* Architecture Plan Panel */}
+      {!isLoading && parsedPlan && (
+        <PlanPanel
+          plan={parsedPlan}
+          collapsed={planCollapsed}
+          onToggle={() => setPlanCollapsed(prev => !prev)}
+        />
       )}
 
       <div className="flex flex-1 overflow-hidden">
