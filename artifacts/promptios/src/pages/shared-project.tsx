@@ -51,7 +51,7 @@ export default function SharedProject() {
   const token = params?.token ?? "";
   const { toast } = useToast();
   const [selectedFileId, setSelectedFileId] = useState<number | null>(null);
-  const [planCollapsed, setPlanCollapsed] = useState(false);
+  const [planCollapsed, setPlanCollapsed] = useState(true);
 
   const { data, isLoading, error } = useQuery<SharedProjectData>({
     queryKey: ["shared", token],
