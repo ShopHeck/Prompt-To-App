@@ -116,9 +116,15 @@ export function TourProvider({ children }: { children: React.ReactNode }) {
     } catch {}
   }, []);
 
-  // Auto-start on first visit
+  // Auto-start on first visit (unless URL says ?skipTour=1, which is useful
+  // for screenshots, recordings, and demos)
   useEffect(() => {
     try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("skipTour") === "1") {
+        window.localStorage.setItem(STORAGE_KEY, "1");
+        return undefined;
+      }
       const seen = window.localStorage.getItem(STORAGE_KEY);
       if (!seen) {
         const t = window.setTimeout(() => setIsActive(true), 600);

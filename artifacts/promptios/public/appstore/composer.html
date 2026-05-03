@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=1290, initial-scale=1" />
+<title>App Store Screenshot Composer</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 1290px;
+    height: 2796px;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    color: #fff;
+  }
+  .stage {
+    position: relative;
+    width: 1290px;
+    height: 2796px;
+    overflow: hidden;
+  }
+
+  /* Background gradients per slide */
+  .bg-1 { background: radial-gradient(120% 90% at 0% 0%, #0EA5E9 0%, #1E3A8A 35%, #0B1020 75%, #060914 100%); }
+  .bg-2 { background: radial-gradient(120% 90% at 100% 0%, #22D3EE 0%, #1E40AF 35%, #0B1020 75%, #060914 100%); }
+  .bg-3 { background: radial-gradient(120% 90% at 50% 0%, #14B8A6 0%, #0F766E 35%, #0B1020 75%, #060914 100%); }
+  .bg-4 { background: radial-gradient(120% 90% at 0% 100%, #8B5CF6 0%, #4338CA 30%, #0B1020 75%, #060914 100%); }
+  .bg-5 { background: radial-gradient(120% 90% at 100% 100%, #F472B6 0%, #6D28D9 30%, #0B1020 75%, #060914 100%); }
+
+  /* Subtle grid overlay */
+  .grid {
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px);
+    background-size: 64px 64px;
+    mask-image: radial-gradient(80% 70% at 50% 50%, #000 0%, transparent 100%);
+    -webkit-mask-image: radial-gradient(80% 70% at 50% 50%, #000 0%, transparent 100%);
+  }
+
+  /* Top eyebrow + headline area */
+  .copy {
+    position: absolute;
+    left: 96px;
+    right: 96px;
+    top: 160px;
+    text-align: center;
+  }
+  .eyebrow {
+    display: inline-block;
+    padding: 14px 28px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.22);
+    background: rgba(255,255,255,0.06);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    font-size: 32px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.92);
+    margin-bottom: 36px;
+  }
+  .eyebrow .dot { display: inline-block; width: 12px; height: 12px; border-radius: 999px; background: #5EEAD4; margin-right: 14px; transform: translateY(-2px); box-shadow: 0 0 16px rgba(94,234,212,0.8); }
+  h1 {
+    font-size: 132px;
+    line-height: 1.02;
+    font-weight: 800;
+    letter-spacing: -0.025em;
+    color: #fff;
+    text-shadow: 0 4px 40px rgba(0,0,0,0.5);
+  }
+  h1 .accent {
+    background: linear-gradient(180deg, #67E8F9 0%, #C4B5FD 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .sub {
+    margin-top: 36px;
+    font-size: 44px;
+    line-height: 1.35;
+    color: rgba(255,255,255,0.78);
+    font-weight: 400;
+    max-width: 1080px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  /* Phone frame */
+  .phone-wrap {
+    position: absolute;
+    left: 50%;
+    bottom: 90px;
+    transform: translateX(-50%);
+    width: 900px;
+    height: 1840px;
+  }
+  .phone {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    border-radius: 130px;
+    background: linear-gradient(160deg, #1A1D24 0%, #0B0E14 100%);
+    box-shadow:
+      0 80px 160px -40px rgba(0,0,0,0.7),
+      0 30px 80px -20px rgba(0,0,0,0.55),
+      inset 0 0 0 6px rgba(255,255,255,0.06),
+      inset 0 0 0 14px rgba(0,0,0,0.6);
+    padding: 24px;
+  }
+  .screen {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    border-radius: 108px;
+    overflow: hidden;
+    background: #060914;
+  }
+  .screen img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: top center;
+    display: block;
+  }
+  .notch {
+    position: absolute;
+    top: 50px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 280px;
+    height: 60px;
+    border-radius: 999px;
+    background: #000;
+    z-index: 10;
+  }
+
+  /* Side buttons */
+  .btn-side {
+    position: absolute;
+    background: #0F1115;
+    border-radius: 6px;
+  }
+  .btn-power { right: -8px; top: 480px; width: 12px; height: 200px; }
+  .btn-vol-up { left: -8px; top: 360px; width: 12px; height: 130px; }
+  .btn-vol-down { left: -8px; top: 510px; width: 12px; height: 200px; }
+  .btn-mute { left: -8px; top: 290px; width: 12px; height: 60px; }
+
+  /* Decorative orbs */
+  .orb {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(80px);
+    opacity: 0.5;
+    pointer-events: none;
+  }
+  .orb-a { width: 600px; height: 600px; left: -200px; top: 1200px; background: #06B6D4; }
+  .orb-b { width: 500px; height: 500px; right: -150px; top: 1500px; background: #A78BFA; }
+
+  /* Footer brand mark */
+  .brandmark {
+    position: absolute;
+    left: 50%;
+    bottom: 32px;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.55);
+  }
+  .brandmark .pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #06B6D4 0%, #8B5CF6 100%);
+    color: #fff;
+    font-size: 22px;
+  }
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+  <div class="grid"></div>
+  <div class="orb orb-a"></div>
+  <div class="orb orb-b"></div>
+  <div class="copy">
+    <div class="eyebrow"><span class="dot"></span><span id="eyebrow">PROMPT iOS</span></div>
+    <h1 id="headline">Headline goes here.</h1>
+    <p class="sub" id="sub">Subline copy goes here.</p>
+  </div>
+  <div class="phone-wrap">
+    <div class="phone">
+      <div class="btn-side btn-mute"></div>
+      <div class="btn-side btn-vol-up"></div>
+      <div class="btn-side btn-vol-down"></div>
+      <div class="btn-side btn-power"></div>
+      <div class="screen">
+        <div class="notch"></div>
+        <img id="shot" alt="" />
+      </div>
+    </div>
+  </div>
+  <div class="brandmark">
+    <span class="pill">›_</span>
+    <span>promptiOS</span>
+  </div>
+</div>
+
+<script>
+  const SLIDES = {
+    1: {
+      bg: "bg-1",
+      eyebrow: "From prompt → App Store",
+      headlineHtml: 'Build iOS apps in <span class="accent">plain English.</span>',
+      sub: "Describe what you want. promptiOS plans the architecture, writes the SwiftUI, and hands you a ready-to-archive Xcode project.",
+      img: "dashboard.jpg",
+    },
+    2: {
+      bg: "bg-2",
+      eyebrow: "One prompt is enough",
+      headlineHtml: 'Just describe <span class="accent">the app.</span>',
+      sub: "Screens, data models, navigation, styling — capture the idea in a paragraph and let the engine architect the rest.",
+      img: "new-project.jpg",
+    },
+    3: {
+      bg: "bg-3",
+      eyebrow: "Plan · validate · repair",
+      headlineHtml: 'Quality, <span class="accent">scored.</span>',
+      sub: "Every build is checked against the plan. Missing screens and off-spec files are auto-repaired before the code lands in your hands.",
+      img: "project-detail.jpg",
+    },
+    4: {
+      bg: "bg-4",
+      eyebrow: "App Store-ready output",
+      headlineHtml: 'Ship to the <span class="accent">App Store.</span>',
+      sub: "Real iOS App target, asset catalog, signed Info.plist keys. A guided walkthrough takes you from xcodegen to TestFlight.",
+      img: "guide.jpg",
+    },
+    5: {
+      bg: "bg-5",
+      eyebrow: "Built to ship",
+      headlineHtml: 'No SwiftUI <span class="accent">required.</span>',
+      sub: "Open the Xcode project, hit Run. Tweak in Swift if you like — every file is clean, idiomatic, and yours to keep.",
+      img: "dashboard.jpg",
+    },
+  };
+
+  const params = new URLSearchParams(window.location.search);
+  const id = params.get("id") || "1";
+  const slide = SLIDES[id] || SLIDES["1"];
+
+  const stage = document.getElementById("stage");
+  stage.classList.add(slide.bg);
+  document.getElementById("eyebrow").textContent = slide.eyebrow;
+  document.getElementById("headline").innerHTML = slide.headlineHtml;
+  document.getElementById("sub").textContent = slide.sub;
+  document.getElementById("shot").src = slide.img;
+</script>
+</body>
+</html>

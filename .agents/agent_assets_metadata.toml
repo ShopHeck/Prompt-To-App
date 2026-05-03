@@ -1,0 +1,43 @@
+uploads = []
+
+[[generated]]
+id = "Qht1PtaZVud7x-B0fXCa8"
+uri = "file://attached_assets/appstore/AppIcon-1024.png"
+type = "image"
+title = "promptios app icon"
+
+[[outputs]]
+id = "f-uW1FYP3YAROZPDEEj-N"
+uri = "file://attached_assets/appstore/AppIcon-1024.png"
+type = "image"
+title = "App Icon (1024×1024)"
+
+[[outputs]]
+id = "8_qekukDat_t6jZ7k9sfJ"
+uri = "file://attached_assets/appstore/Screenshot-67-1.jpg"
+type = "image"
+title = "6.7\" Screenshot 1 — Build iOS apps in plain English"
+
+[[outputs]]
+id = "S8zQi9Xe7gxMM3QjL9rTS"
+uri = "file://attached_assets/appstore/Screenshot-67-2.jpg"
+type = "image"
+title = "6.7\" Screenshot 2 — Just describe the app"
+
+[[outputs]]
+id = "fGHizlA10zjgzrMJbdTQP"
+uri = "file://attached_assets/appstore/Screenshot-67-3.jpg"
+type = "image"
+title = "6.7\" Screenshot 3 — Quality, scored"
+
+[[outputs]]
+id = "EbmiW80vtDgBmexqBH141"
+uri = "file://attached_assets/appstore/Screenshot-67-4.jpg"
+type = "image"
+title = "6.7\" Screenshot 4 — Ship to the App Store"
+
+[[outputs]]
+id = "ABhWUsXqGgLrY5ZalQyp2"
+uri = "file://attached_assets/appstore/Screenshot-67-5.jpg"
+type = "image"
+title = "6.7\" Screenshot 5 — No SwiftUI required"
