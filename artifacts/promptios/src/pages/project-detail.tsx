@@ -1,3 +1,4 @@
+import * as React from "react";
 import { useEffect, useState, useRef } from "react";
 import { useRoute } from "wouter";
 import { Layout } from "@/components/layout";
@@ -10,9 +11,11 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import {
   FileCode, Play, RotateCw, AlertTriangle, File, CheckCircle2,
-  Copy, Download, Code2, Cpu, Share2, Check, Layers, Hammer, PencilLine
+  Copy, Download, Code2, Cpu, Share2, Check, Layers, Hammer, PencilLine,
+  FolderTree
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent, SheetTrigger, SheetTitle, SheetClose } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -20,6 +23,98 @@ import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { PlanPanel, parsePartialPlan, type ArchitecturePlan, type PartialPlan } from "@/components/plan-panel";
 import { ClarifyPanel, ClarifyAnswersDisplay, type ClarifyingQuestion, type ClarifyAnswer } from "@/components/clarify-panel";
 import { AccuracyReportPanel, type AccuracyReport, type RepairHistoryEntry } from "@/components/accuracy-report-panel";
+
+interface ExplorerFile {
+  id: number;
+  filename: string;
+  filepath: string;
+  language: string;
+  content: string;
+}
+
+function FileExplorerContents({
+  files,
+  isLoadingFiles,
+  selectedFileId,
+  setSelectedFileId,
+  isActivelyGenerating,
+  isAwaitingApproval,
+  closeOnSelect = false,
+}: {
+  files: ExplorerFile[] | undefined;
+  isLoadingFiles: boolean;
+  selectedFileId: number | null;
+  setSelectedFileId: (id: number) => void;
+  isActivelyGenerating: boolean;
+  isAwaitingApproval: boolean;
+  closeOnSelect?: boolean;
+}) {
+  return (
+    <div className="flex h-full flex-col">
+      <div className="flex h-11 items-center gap-2 border-b border-border/60 px-4 shrink-0">
+        <FolderTree className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={1.75} />
+        <span className="font-mono text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
+          Files
+        </span>
+        {!isLoadingFiles && files && files.length > 0 && (
+          <span className="ml-auto font-mono text-[10px] tabular-nums text-muted-foreground/60">
+            {files.length}
+          </span>
+        )}
+      </div>
+      <div className="flex-1 overflow-y-auto py-2">
+        {isLoadingFiles ? (
+          <div className="space-y-2 px-3">
+            <Skeleton className="h-5 w-full" />
+            <Skeleton className="h-5 w-5/6" />
+            <Skeleton className="h-5 w-4/6" />
+            <Skeleton className="h-5 w-3/6" />
+          </div>
+        ) : files?.length === 0 ? (
+          <div className="px-4 py-10 text-center text-xs text-muted-foreground">
+            {isActivelyGenerating
+              ? "Awaiting output stream…"
+              : isAwaitingApproval
+                ? "Approve the plan to generate files."
+                : "No files generated yet."}
+          </div>
+        ) : (
+          <div className="flex flex-col">
+            {files?.map((file) => {
+              const active = selectedFileId === file.id;
+              const btn = (
+                <button
+                  onClick={() => setSelectedFileId(file.id)}
+                  className={`flex items-center gap-2 px-3 py-1.5 text-left font-mono text-[12.5px] transition-all active:scale-[0.99] ${
+                    active
+                      ? "bg-secondary/70 text-foreground border-l-2 border-primary"
+                      : "border-l-2 border-transparent text-muted-foreground hover:bg-secondary/30 hover:text-foreground"
+                  }`}
+                  data-testid={`file-item-${file.id}`}
+                >
+                  <FileCode
+                    className={`h-3.5 w-3.5 shrink-0 ${active ? "text-primary" : "text-muted-foreground/50"}`}
+                    strokeWidth={1.75}
+                  />
+                  <span className="truncate">{file.filepath}</span>
+                </button>
+              );
+              return closeOnSelect ? (
+                <SheetClose key={file.id} asChild>
+                  {btn}
+                </SheetClose>
+              ) : (
+                <div key={file.id} className="contents">
+                  {btn}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export default function ProjectDetail() {
   const [, params] = useRoute("/projects/:id");
@@ -29,7 +124,13 @@ export default function ProjectDetail() {
   
   const [selectedFileId, setSelectedFileId] = useState<number | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [mobileExplorerOpen, setMobileExplorerOpen] = useState(false);
   const hasTriggeredInitialGeneration = useRef(false);
+
+  // Auto-close mobile file explorer drawer whenever a file is selected
+  useEffect(() => {
+    if (selectedFileId !== null) setMobileExplorerOpen(false);
+  }, [selectedFileId]);
 
   // Two-phase generation state
   const [generationPhase, setGenerationPhase] = useState<"idle" | "planning" | "clarifying" | "awaiting_approval" | "building" | "validating">("idle");
@@ -469,44 +570,65 @@ export default function ProjectDetail() {
 
   return (
     <Layout>
-      <div className="flex flex-col h-full">
+      <div className="flex flex-col h-full min-h-[calc(100dvh-3.5rem)] md:min-h-[100dvh]">
         {/* Workspace Header */}
-        <header className="h-14 border-b border-border bg-card/80 backdrop-blur flex items-center justify-between px-4 shrink-0">
-          <div className="flex items-center gap-3">
+        <header className="border-b border-border bg-card/70 backdrop-blur flex items-center justify-between gap-2 px-4 py-2.5 md:h-14 md:py-0 shrink-0">
+          <div className="flex min-w-0 items-center gap-2 md:gap-3">
+            <Sheet open={mobileExplorerOpen} onOpenChange={setMobileExplorerOpen}>
+              <SheetTrigger
+                aria-label="Open file explorer"
+                className="md:hidden flex h-8 w-8 items-center justify-center rounded-md border border-border bg-secondary/40 text-muted-foreground transition-all active:scale-95 hover:text-foreground"
+              >
+                <FolderTree className="h-4 w-4" strokeWidth={1.75} />
+              </SheetTrigger>
+              <SheetContent side="left" className="w-80 border-r border-border bg-sidebar p-0">
+                <SheetTitle className="sr-only">File explorer</SheetTitle>
+                <FileExplorerContents
+                  files={files}
+                  isLoadingFiles={isLoadingFiles}
+                  selectedFileId={selectedFileId}
+                  setSelectedFileId={setSelectedFileId}
+                  isActivelyGenerating={isActivelyGenerating}
+                  isAwaitingApproval={isAwaitingApproval}
+                  closeOnSelect
+                />
+              </SheetContent>
+            </Sheet>
             {isLoadingProject ? (
-              <Skeleton className="h-6 w-32" />
+              <Skeleton className="h-5 w-32" />
             ) : (
-              <>
-                <h1 className="font-bold text-foreground font-mono">{project?.name}</h1>
-                <span className="px-2 py-0.5 rounded text-[10px] font-mono uppercase bg-secondary text-secondary-foreground border border-secondary-border">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <h1 className="truncate font-mono font-semibold text-foreground">{project?.name}</h1>
+                <span className="rounded-md bg-secondary/70 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
                   {project?.framework}
                 </span>
                 {statusBadge()}
-              </>
+              </div>
             )}
           </div>
           
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
             {project?.status === 'complete' && (files?.length ?? 0) > 0 && (
               <>
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={handleShare}
-                  className="gap-2 font-mono text-xs"
+                  className="gap-1.5 rounded-md font-mono text-xs active:scale-[0.97]"
                   title="Copy shareable link"
                 >
-                  {isCopiedLink ? <Check className="h-3 w-3 text-green-400" /> : <Share2 className="h-3 w-3" />}
-                  {isCopiedLink ? "Copied!" : "Share"}
+                  {isCopiedLink ? <Check className="h-3 w-3 text-emerald-400" strokeWidth={2.25} /> : <Share2 className="h-3 w-3" strokeWidth={2} />}
+                  <span className="hidden sm:inline">{isCopiedLink ? "Copied" : "Share"}</span>
                 </Button>
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={handleDownload}
-                  className="gap-2 font-mono text-xs"
+                  className="gap-1.5 rounded-md font-mono text-xs active:scale-[0.97]"
                   title="Download as Xcode-ready zip"
                 >
-                  <Download className="h-3 w-3" /> Download .zip
+                  <Download className="h-3 w-3" strokeWidth={2} />
+                  <span className="hidden sm:inline">.zip</span>
                 </Button>
               </>
             )}
@@ -516,10 +638,12 @@ export default function ProjectDetail() {
                 variant="default"
                 disabled={isGenerating}
                 onClick={handleApprovePlan}
-                className="gap-2 font-mono hover-elevate text-xs bg-amber-500 hover:bg-amber-600 text-black border-0"
+                className="gap-1.5 rounded-md font-mono text-xs active:scale-[0.97] bg-amber-500 hover:bg-amber-600 text-black border-0"
                 data-testid="btn-approve-plan"
               >
-                <Hammer className="h-3 w-3" /> Approve &amp; Build
+                <Hammer className="h-3 w-3" strokeWidth={2} />
+                <span className="hidden sm:inline">Approve &amp; build</span>
+                <span className="sm:hidden">Build</span>
               </Button>
             )}
             <Button 
@@ -527,17 +651,17 @@ export default function ProjectDetail() {
               variant={project?.status === 'complete' ? "outline" : isAwaitingApproval ? "outline" : "default"}
               disabled={isActivelyGenerating || isLoadingProject || isAwaitingApproval}
               onClick={handleGenerate}
-              className="gap-2 font-mono hover-elevate text-xs"
+              className="gap-1.5 rounded-md font-mono text-xs active:scale-[0.97]"
               data-testid="btn-generate"
             >
               {isActivelyGenerating ? (
-                <><RotateCw className="h-3 w-3 animate-spin" /> Working...</>
+                <><RotateCw className="h-3 w-3 animate-spin" strokeWidth={2} /> <span className="hidden sm:inline">Working…</span></>
               ) : project?.status === 'complete' || project?.status === 'error' ? (
-                <><RotateCw className="h-3 w-3" /> Regenerate</>
+                <><RotateCw className="h-3 w-3" strokeWidth={2} /> <span className="hidden sm:inline">Regenerate</span></>
               ) : isAwaitingApproval ? (
-                <><RotateCw className="h-3 w-3" /> Re-plan</>
+                <><RotateCw className="h-3 w-3" strokeWidth={2} /> <span className="hidden sm:inline">Re-plan</span></>
               ) : (
-                <><Play className="h-3 w-3 fill-current" /> Start Build</>
+                <><Play className="h-3 w-3 fill-current" strokeWidth={2} /> <span className="hidden sm:inline">Start build</span><span className="sm:hidden">Build</span></>
               )}
             </Button>
           </div>
@@ -577,40 +701,16 @@ export default function ProjectDetail() {
         />
 
         <div className="flex flex-1 overflow-hidden">
-          {/* File Explorer Sidebar */}
-          <div className="w-64 border-r border-border bg-background flex flex-col shrink-0">
-            <div className="p-3 text-xs font-mono font-bold tracking-widest text-muted-foreground uppercase border-b border-border/50 shrink-0">
-              Explorer
-            </div>
-            <div className="flex-1 overflow-y-auto py-2">
-              {isLoadingFiles ? (
-                <div className="space-y-2 px-3">
-                  <Skeleton className="h-6 w-full" />
-                  <Skeleton className="h-6 w-5/6" />
-                  <Skeleton className="h-6 w-4/6" />
-                </div>
-              ) : files?.length === 0 ? (
-                <div className="px-4 py-8 text-center text-sm text-muted-foreground font-mono">
-                  {isActivelyGenerating ? 'Awaiting output stream...' : isAwaitingApproval ? 'Approve plan to generate files.' : 'No files generated.'}
-                </div>
-              ) : (
-                <div className="flex flex-col">
-                  {files?.map(file => (
-                    <button
-                      key={file.id}
-                      onClick={() => setSelectedFileId(file.id)}
-                      className={`flex items-center gap-2 px-3 py-1.5 text-sm text-left transition-colors font-mono hover:bg-secondary/50 ${
-                        selectedFileId === file.id ? 'bg-secondary text-primary border-l-2 border-primary' : 'text-muted-foreground border-l-2 border-transparent'
-                      }`}
-                      data-testid={`file-item-${file.id}`}
-                    >
-                      <FileCode className={`h-4 w-4 shrink-0 ${selectedFileId === file.id ? 'text-primary' : 'text-muted-foreground/60'}`} />
-                      <span className="truncate">{file.filepath}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+          {/* Desktop file explorer sidebar */}
+          <div className="hidden md:flex w-64 border-r border-border bg-background flex-col shrink-0">
+            <FileExplorerContents
+              files={files}
+              isLoadingFiles={isLoadingFiles}
+              selectedFileId={selectedFileId}
+              setSelectedFileId={setSelectedFileId}
+              isActivelyGenerating={isActivelyGenerating}
+              isAwaitingApproval={isAwaitingApproval}
+            />
           </div>
 
           {/* Code Viewer Area */}
