@@ -35,6 +35,8 @@ export interface Project {
   status: ProjectStatus;
   framework: ProjectFramework;
   fileCount: number;
+  /** @nullable */
+  architecturePlan: string | null;
   createdAt: string;
   updatedAt: string;
 }

@@ -26,6 +26,7 @@ export const ListProjectsResponseItem = zod.object({
   status: zod.enum(["pending", "generating", "complete", "error"]),
   framework: zod.enum(["swiftui", "uikit"]),
   fileCount: zod.number(),
+  architecturePlan: zod.string().nullable(),
   createdAt: zod.string(),
   updatedAt: zod.string(),
 });
@@ -55,6 +56,7 @@ export const GetProjectResponse = zod.object({
   status: zod.enum(["pending", "generating", "complete", "error"]),
   framework: zod.enum(["swiftui", "uikit"]),
   fileCount: zod.number(),
+  architecturePlan: zod.string().nullable(),
   createdAt: zod.string(),
   updatedAt: zod.string(),
 });
@@ -112,6 +114,7 @@ export const GetSharedProjectResponse = zod.object({
     status: zod.enum(["pending", "generating", "complete", "error"]),
     framework: zod.enum(["swiftui", "uikit"]),
     fileCount: zod.number(),
+    architecturePlan: zod.string().nullable(),
     createdAt: zod.string(),
     updatedAt: zod.string(),
   }),
@@ -150,6 +153,7 @@ export const GetRecentProjectsResponseItem = zod.object({
   status: zod.enum(["pending", "generating", "complete", "error"]),
   framework: zod.enum(["swiftui", "uikit"]),
   fileCount: zod.number(),
+  architecturePlan: zod.string().nullable(),
   createdAt: zod.string(),
   updatedAt: zod.string(),
 });

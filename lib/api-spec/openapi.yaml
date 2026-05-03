@@ -240,6 +240,8 @@ components:
           enum: [swiftui, uikit]
         fileCount:
           type: integer
+        architecturePlan:
+          type: ["string", "null"]
         createdAt:
           type: string
         updatedAt:
@@ -252,6 +254,7 @@ components:
         - status
         - framework
         - fileCount
+        - architecturePlan
         - createdAt
         - updatedAt
 

@@ -55,19 +55,14 @@ export default function SharedProject() {
     queryFn: async () => {
       const res = await fetch(`/api/share/${token}`);
       if (!res.ok) throw new Error("Not found");
-      return res.json();
+      return res.json() as Promise<SharedProjectData>;
     },
     enabled: !!token,
-    onSuccess: (d) => {
-      if (d.files.length > 0 && selectedFileId === null) {
-        setSelectedFileId(d.files[0].id);
-      }
-    },
   });
 
   const project = data?.project;
-  const files = data?.files ?? [];
-  const selectedFile = files.find((f) => f.id === selectedFileId) ?? files[0];
+  const files: ProjectFile[] = data?.files ?? [];
+  const selectedFile = files.find((f: ProjectFile) => f.id === selectedFileId) ?? files[0];
 
   const copyToClipboard = () => {
     if (selectedFile?.content) {
