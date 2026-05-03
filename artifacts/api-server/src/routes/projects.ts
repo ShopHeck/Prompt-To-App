@@ -1296,6 +1296,21 @@ router.post("/projects/:id/generate", async (req, res) => {
       return;
     }
 
+    // Guard: if already "generating" but updated >5 min ago, the server crashed
+    // mid-run. Auto-reset so the new request can proceed instead of silently
+    // queueing behind a zombie job.
+    if (project.status === "generating") {
+      const staleCutoff = new Date(Date.now() - 5 * 60 * 1000);
+      const updatedAt = project.updatedAt ? new Date(project.updatedAt) : new Date(0);
+      if (updatedAt < staleCutoff) {
+        req.log.warn({ projectId: id, updatedAt }, "Resetting stale generating status");
+      } else {
+        sendEvent({ type: "error", message: "Build already in progress." });
+        res.end();
+        return;
+      }
+    }
+
     const frameworkName = project.framework === "swiftui" ? "SwiftUI" : "UIKit";
 
     // Mark as generating
@@ -1470,6 +1485,19 @@ router.post("/projects/:id/approve-plan", async (req, res) => {
       sendEvent({ type: "error", message: "Project not found" });
       res.end();
       return;
+    }
+
+    // Guard: stale "generating" from a prior crashed/restarted run — auto-reset.
+    if (project.status === "generating") {
+      const staleCutoff = new Date(Date.now() - 5 * 60 * 1000);
+      const updatedAt = project.updatedAt ? new Date(project.updatedAt) : new Date(0);
+      if (updatedAt < staleCutoff) {
+        req.log.warn({ projectId: id, updatedAt }, "approve-plan: resetting stale generating status");
+      } else {
+        sendEvent({ type: "error", message: "Build already in progress." });
+        res.end();
+        return;
+      }
     }
 
     // Mark as generating

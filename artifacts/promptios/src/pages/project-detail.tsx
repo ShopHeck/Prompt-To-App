@@ -644,7 +644,12 @@ export default function ProjectDetail() {
   }
 
   const isAwaitingClarification = generationPhase === "clarifying" || (!isGenerating && project?.status === "awaiting_clarification");
-  const isActivelyGenerating = (isGenerating || project?.status === 'generating') && !isAwaitingClarification;
+  // isActivelyGenerating tracks the LIVE local SSE connection — NOT the DB status.
+  // The DB can show "generating" indefinitely after a server crash/restart; only
+  // isGenerating (set by the SSE event handler) is authoritative for disabling UI.
+  const isActivelyGenerating = isGenerating && !isAwaitingClarification;
+  // Stale: DB says generating but no active local SSE → server crashed or restarted.
+  const isStaleGenerating = project?.status === 'generating' && !isGenerating;
   const isAwaitingApproval = generationPhase === "awaiting_approval" || (!isGenerating && project?.status === "awaiting_approval");
   const statusBadge = () => {
     if (isAwaitingClarification) {
@@ -676,6 +681,14 @@ export default function ProjectDetail() {
         <span className="px-2 py-0.5 rounded text-[10px] font-mono uppercase bg-amber-500/10 text-amber-400 border border-amber-500/30 flex items-center gap-1">
           <PencilLine className="h-3 w-3" />
           Review Plan
+        </span>
+      );
+    }
+    if (isStaleGenerating) {
+      return (
+        <span className="px-2 py-0.5 rounded text-[10px] font-mono uppercase bg-orange-500/10 text-orange-400 border border-orange-500/30 flex items-center gap-1">
+          <AlertTriangle className="h-3 w-3" />
+          Stuck
         </span>
       );
     }
@@ -791,14 +804,16 @@ export default function ProjectDetail() {
             )}
             <Button 
               size="sm" 
-              variant={project?.status === 'complete' ? "outline" : isAwaitingApproval ? "outline" : "default"}
+              variant={project?.status === 'complete' || isStaleGenerating ? "outline" : isAwaitingApproval ? "outline" : "default"}
               disabled={isActivelyGenerating || isLoadingProject || isAwaitingApproval}
               onClick={handleGenerate}
-              className="gap-1.5 rounded-md font-mono text-xs active:scale-[0.97]"
+              className={`gap-1.5 rounded-md font-mono text-xs active:scale-[0.97] ${isStaleGenerating ? "border-orange-500/50 text-orange-400 hover:bg-orange-500/10" : ""}`}
               data-testid="btn-generate"
             >
               {isActivelyGenerating ? (
                 <><RotateCw className="h-3 w-3 animate-spin" strokeWidth={2} /> <span className="hidden sm:inline">Working…</span></>
+              ) : isStaleGenerating ? (
+                <><RotateCw className="h-3 w-3" strokeWidth={2} /> <span className="hidden sm:inline">Retry</span></>
               ) : project?.status === 'complete' || project?.status === 'error' ? (
                 <><RotateCw className="h-3 w-3" strokeWidth={2} /> <span className="hidden sm:inline">Regenerate</span></>
               ) : isAwaitingApproval ? (
@@ -811,6 +826,25 @@ export default function ProjectDetail() {
         </header>
 
         {/* Clarifying Questions */}
+        {/* Stale generation recovery banner */}
+        {isStaleGenerating && (
+          <div className="mx-4 mt-3 flex items-center gap-3 rounded-lg border border-orange-500/30 bg-orange-500/5 px-4 py-3 text-sm">
+            <AlertTriangle className="h-4 w-4 shrink-0 text-orange-400" />
+            <span className="text-orange-300/90">
+              This build got stuck — the server restarted mid-generation. Click <strong>Retry</strong> to restart it.
+            </span>
+            <Button
+              size="sm"
+              onClick={handleGenerate}
+              disabled={isLoadingProject}
+              className="ml-auto shrink-0 gap-1.5 rounded-md border-orange-500/50 bg-orange-500/10 font-mono text-xs text-orange-400 hover:bg-orange-500/20 active:scale-[0.97]"
+              variant="outline"
+            >
+              <RotateCw className="h-3 w-3" strokeWidth={2} /> Retry
+            </Button>
+          </div>
+        )}
+
         {isAwaitingClarification && clarifyingQuestions.length > 0 && (
           <div data-tour="clarify">
             <ClarifyPanel
