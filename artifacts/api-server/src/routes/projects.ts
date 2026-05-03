@@ -993,20 +993,23 @@ async function runLivePreviewGeneration(
   const navHint = (plan.navigation || "").toLowerCase();
   const navStyle = /tab/.test(navHint) ? "bottom tab bar" : /stack|push|nav/.test(navHint) ? "navigation stack with back button" : "single screen";
 
-  const systemPrompt = `You are a UI translator. Given an iOS app's plan and SwiftUI source, produce ONE self-contained HTML document that visually approximates the app so it can be embedded in an iframe inside a phone-frame preview.
+  const systemPrompt = `You are a UI translator. Given an iOS app's plan and SwiftUI source, produce ONE self-contained HTML document that visually approximates the app so it can be embedded in an iframe inside a phone-frame preview. The iframe is rendered at intrinsic 390×844 logical pixels and CSS-scaled to fit, so design EXACTLY for that viewport.
 
 Hard rules:
 - Output a complete HTML document. Start with <!DOCTYPE html>. No markdown fences. No commentary.
-- Inline ALL styles and scripts. Allowed CDN tags: <script src="https://cdn.tailwindcss.com"></script>.
-- Target a 390x844 viewport. Use mobile-first layout. No horizontal scroll.
-- Use the system font stack: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif.
-- Render an iOS-style status bar (time 9:41, signal/wifi/battery glyphs as inline SVG or unicode) at the top.
-- Implement screen switching with plain vanilla JS (no React, no build step). Use a simple state object that toggles which screen <section> is visible.
-- Include the navigation pattern indicated below: ${navStyle}. For tab bar, render at the bottom with icons + labels. For nav stack, show a header with title and an optional chevron-left back button when not on the root screen.
-- Each screen should render representative content based on its purpose, with realistic mock data. Lists, cards, buttons, form controls — match SwiftUI styling (rounded corners, subtle separators, generous spacing, blue tint #007AFF for actions).
-- Tap targets must work: tapping a list row navigates if appropriate, buttons toggle state where it makes sense.
-- Keep total output under 14000 characters.
-- DO NOT fetch external resources besides Tailwind CDN. No images from external URLs (use CSS gradients or inline SVG placeholders).
+- Inline ALL styles and scripts. Allowed CDN tags: <script src="https://cdn.tailwindcss.com"></script>. Optional: Google Fonts <link> tags.
+- The <head> MUST include this exact viewport meta tag: <meta name="viewport" content="width=390, initial-scale=1, viewport-fit=cover">.
+- The <body> MUST be exactly 390px wide and 844px tall with overflow:hidden, so the iframe scales correctly. Apply this with inline style: style="margin:0;width:390px;height:844px;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',sans-serif;-webkit-font-smoothing:antialiased;".
+- Inside <body>, layout must be a column: a fixed-height status bar (~44px), a flex-1 SCREEN container that holds the visible <section>, and (when present) a fixed-height tab bar (~84px) at the bottom. The SCREEN container MUST have overflow-y:auto and overscroll-behavior:contain so vertical scrolling happens INSIDE the iframe. Header / tab bar use position:sticky within their flex slots, NOT position:fixed.
+- Render an iOS-style status bar at the top: time "9:41" on the left, signal/wifi/battery glyphs (inline SVG or unicode) on the right, ~44px tall.
+- Implement screen switching with plain vanilla JS (no React, no build step). Use a simple state object that toggles which screen <section data-screen="..."> is visible (display:none vs flex).
+- Include the navigation pattern indicated below: ${navStyle}. For tab bar, render at the bottom with icons + labels, exactly 84px tall (includes safe-area inset). For nav stack, show a sticky header with title and an optional chevron-left back button when not on the root screen.
+- Every interactive element (<button>, list rows that navigate, tab items, toggles, links) MUST have a working JS click/tap handler — no dead controls. Tapping a list row navigates if appropriate; toggles flip a boolean and re-render.
+- Each screen renders representative content based on its purpose, with realistic mock data (5-10 varied items per list, believable names/dates/copy, NEVER "Item 1, Item 2"). Match modern iOS styling: rounded corners (12-20px), subtle separators (rgba(60,60,67,0.18)), generous spacing (16-24px), accent #007AFF for actions, system grays for secondary text.
+- Typography: body text minimum 15px, navigation/tab labels 11-13px, headlines 20-34px. Multi-word strings MUST wrap naturally — no white-space:nowrap on titles, descriptions, or list rows.
+- Tap targets are at least 44×44px.
+- Keep total output under 22000 characters.
+- DO NOT fetch external resources besides Tailwind CDN and Google Fonts. No images from external URLs (use CSS gradients or inline SVG placeholders).
 - DO NOT include any explanatory text. Output the HTML only.`;
 
   const userMessage = `App name: ${appName}
@@ -1025,7 +1028,7 @@ Produce the HTML preview now.`;
   try {
     const completion = await openai.chat.completions.create({
       model: "gpt-5.4",
-      max_completion_tokens: 6000,
+      max_completion_tokens: 9000,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userMessage },
