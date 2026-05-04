@@ -839,10 +839,24 @@ async function runAccuracyValidation(
   plan: ArchitecturePlan,
   files: Array<{ filename: string; filepath: string; content: string }>,
 ): Promise<AccuracyReport> {
+  // Give the validator enough code to actually judge quality.
+  // 240-char previews caused the model to hallucinate "off-spec" verdicts based
+  // on absent evidence. Show short files in full; clip long files to ~1800 chars
+  // (head + tail) so we keep the file header AND the body that actually
+  // contains views/business logic.
+  const FILE_PREVIEW_CAP = 1800;
   const fileSummary = files
     .map(f => {
-      const preview = f.content.slice(0, 240).replace(/\s+/g, " ");
-      return `- ${f.filepath} :: ${preview}${f.content.length > 240 ? "..." : ""}`;
+      const c = f.content;
+      let snippet: string;
+      if (c.length <= FILE_PREVIEW_CAP) {
+        snippet = c;
+      } else {
+        const head = c.slice(0, 1200);
+        const tail = c.slice(-500);
+        snippet = `${head}\n// ...elided ${c.length - 1700} chars...\n${tail}`;
+      }
+      return `\n──── ${f.filepath} (${c.length} chars) ────\n${snippet}`;
     })
     .join("\n");
 
@@ -861,8 +875,8 @@ Status rules:
 - Include one item for every planned screen, every planned model, and every planned file.
 - "matched": present in output AND meets studio-grade quality (see quality bar below).
 - "missing": planned but not in the output.
-- "off-spec": present but clearly wrong purpose, empty stub, trivially broken, OR fails the quality bar (e.g. a screen with hardcoded colors, no loading/empty state, or no accessibility). Mark off-spec aggressively when quality is below studio bar — the repair pass will fix it.
-- "extra": for output items NOT in the plan that look unrelated. Only flag if clearly off-topic; small helpers are fine.
+- "off-spec": present but clearly wrong purpose, empty stub, trivially broken, OR fails the quality bar (e.g. a screen with hardcoded colors, no loading/empty state, or no accessibility). BE CONSERVATIVE — only mark off-spec when you can quote the SPECIFIC problematic line from the file content shown. If the snippet does not contain enough code to judge a criterion, mark it "matched" with confidence ≤ 0.7, NOT "off-spec". Notes must point to a real, visible defect in the snippet — never speculate with "likely…", "unclear…", "evidence not shown", "may be missing…". Hallucinated off-specs are worse than missed real ones because they trigger needless repair regressions.
+- "extra": for output items NOT in the plan that look unrelated. Small helpers and merged model files (e.g. several planned model types combined into one Models.swift) are FINE — do NOT flag those as extra. Only flag a file as extra if it has no plausible role in the planned app.
 
 Studio-grade quality bar (used to decide matched vs. off-spec, and to drive overallScore):
 - FUNCTIONAL COMPLETENESS (most important): every interactive feature actually works end-to-end. For game apps: legal move validation runs, the AI opponent makes real moves after the human plays, win/loss/draw is detected and shown. For data apps: CRUD persists immediately. For forms: submit validates + writes + gives feedback. A beautiful app with dead logic scores 0-24 regardless of visual quality.
@@ -1083,11 +1097,17 @@ Hard rules:
 - Implement screen switching with plain vanilla JS (no React, no build step). Use a simple state object that toggles which screen <section data-screen="..."> is visible (display:none vs flex).
 - Include the navigation pattern indicated below: ${navStyle}. For tab bar, render at the bottom with icons + labels, exactly 84px tall (includes safe-area inset). For nav stack, show a sticky header with title and an optional chevron-left back button when not on the root screen.
 - Every interactive element (<button>, list rows that navigate, tab items, toggles, links) MUST have a working JS click/tap handler — no dead controls. Tapping a list row navigates if appropriate; toggles flip a boolean and re-render.
+- FUNCTIONAL CORE MECHANIC (this is the most common failure — read carefully): the preview must actually SIMULATE the app's primary feature, not just navigate around stub screens.
+  • Games: the game screen MUST render a visible board / grid / playfield (use absolutely-positioned <div>s, inline-SVG circles, or a CSS grid) with the actual playing pieces drawn at their real coordinates. The primary action (shoot, drop, swap, tap, move) MUST visibly mutate the board state — pieces appear / disappear / move / change color — and re-render the board. Score updates from the real mechanic, not from a hardcoded array. Lose/win conditions are detected and trigger the results screen.
+  • Bubble shooter / match-3 / breakout / snake / tetris / 2048 / sudoku: model the grid as a 2D JS array, render it on every state change, and implement the core action (e.g. shoot color → place at position → flood-fill same-color group of 3+ → remove and add to score) end-to-end. Even a simplified 6-row × 7-column grid with random colors and a working flood-fill is far better than a placeholder.
+  • Lists / forms / CRUD: the add/edit/delete buttons must mutate a JS array and re-render the list. Search must filter the array by the input value. Toggle controls flip state and re-render dependent UI.
+  • Timers / counters: use \`setInterval\` so the UI actually ticks.
+  • A button whose handler only updates a tooltip text or increments a counter without changing visible content is a FAILED preview. Re-render the affected area.
 - ALL inline <script> JavaScript MUST parse cleanly — a single syntax error makes EVERY onclick handler dead. Triple-check ternaries: \`cond ? a : b\` has exactly one \`?\` and one \`:\`. Triple-check that every backtick-delimited template literal is opened and closed correctly, and that nested template literals inside \`.map(...)\` calls do not break the outer template's quoting. When in doubt, build a string with concatenation instead of nesting templates.
 - Each screen renders representative content based on its purpose, with realistic mock data (5-10 varied items per list, believable names/dates/copy, NEVER "Item 1, Item 2"). Match modern iOS styling: rounded corners (12-20px), subtle separators (rgba(60,60,67,0.18)), generous spacing (16-24px), accent #007AFF for actions, system grays for secondary text.
 - Typography: body text minimum 15px, navigation/tab labels 11-13px, headlines 20-34px. Multi-word strings MUST wrap naturally — no white-space:nowrap on titles, descriptions, or list rows.
 - Tap targets are at least 44×44px.
-- Keep total output under 22000 characters.
+- Keep total output under 32000 characters. The functional core mechanic gets the lion's share of the budget — strip cosmetic polish (decorative gradients, multi-screen onboarding) before strip the working game loop.
 - DO NOT fetch external resources besides Tailwind CDN and Google Fonts. No images from external URLs (use CSS gradients or inline SVG placeholders).
 - DO NOT include any explanatory text. Output the HTML only.`;
 
@@ -1141,7 +1161,7 @@ Produce the HTML preview now.`;
   try {
     const completion = await openai.chat.completions.create({
       model: "gpt-5.4",
-      max_completion_tokens: 9000,
+      max_completion_tokens: 14000,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userMessage },
@@ -1160,7 +1180,7 @@ Produce the HTML preview now.`;
       reqLog.error({ jsError: jsError.error }, "Live preview JS has syntax error — attempting one-shot repair");
       const repairCompletion = await openai.chat.completions.create({
         model: "gpt-5.4",
-        max_completion_tokens: 9000,
+        max_completion_tokens: 14000,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userMessage },
@@ -1326,11 +1346,20 @@ Output ONLY a valid JSON object with this exact structure:
 
 ═══ DOMAIN-SPECIFIC ENGINE FILES (mandatory for complex domains) ═══
 
-GAMES (chess, checkers, sudoku, card games, puzzles, any turn-based or real-time game):
-- MUST include a "GameEngine.swift" (or domain-specific name like "ChessEngine.swift") that owns ALL game rules: legal move generation, move validation, win/loss/draw detection, board state, and turn management. This is the most important file in a game app — plan it explicitly with a clear purpose note.
-- MUST include an "AIPlayer.swift" (or "ComputerPlayer.swift") that makes real moves for the opponent. Even a random-legal-move AI is acceptable; a minimax AI is better. The opponent MUST actually respond on every turn.
-- MUST include a "GameViewModel.swift" (or equivalent) that wires the engine to the UI: handles user input, calls engine for legal-move checking, triggers AI moves after the human plays, and drives state updates.
-- Plan models that represent the complete game state (board, piece positions, current turn, captured pieces, move history, game phase: playing/check/checkmate/stalemate/draw).
+GAMES — first decide which subtype, then plan the corresponding files:
+
+  (a) TWO-PLAYER vs CPU games (chess, checkers, tic-tac-toe, reversi, Connect Four, Go, dots-and-boxes, simple card games where the user plays AGAINST the device):
+  - MUST include a "GameEngine.swift" (or domain-specific name like "ChessEngine.swift") that owns ALL game rules: legal move generation, move validation, win/loss/draw detection, board state, and turn management. This is the most important file — plan it explicitly with a clear purpose note.
+  - MUST include an "AIPlayer.swift" (or "ComputerPlayer.swift") that makes real moves for the opponent. Random-legal-move is acceptable; minimax is better. The opponent MUST actually respond on every turn.
+  - MUST include a "GameViewModel.swift" that wires the engine to the UI: handles user input, calls engine for legal-move checking, triggers AI moves after the human plays, and drives state updates.
+  - Plan models that represent the complete game state (board, piece positions, current turn, captured pieces, move history, game phase: playing/check/checkmate/stalemate/draw).
+
+  (b) SINGLE-PLAYER arcade / puzzle / endless games (bubble shooter, sudoku, tetris, breakout, snake, 2048, minesweeper, match-3, runner, idle, solitaire-against-deck): NO AIPlayer.swift — there is no opponent. Instead require:
+  - A "GameEngine.swift" (or domain-specific) that owns the COMPLETE simulation: board/grid state, piece spawning, legal-action validation, scoring, level progression, and lose/win conditions (e.g. ceiling reached, board cleared, no moves left, time up).
+  - A "GameViewModel.swift" that drives the loop: handles user input (tap/drag/swipe), advances simulation tick, updates score, detects game-over, and triggers the results screen.
+  - For real-time games, also a "GameLoopService.swift" using \`Timer.publish\` or \`Task { try await Task.sleep(...) }\` to drive frame updates — never a static placeholder.
+  - Plan models for the complete simulation state (board cells, falling/active piece, score, level, lives, game phase: playing/paused/gameOver).
+  - DO NOT plan an AIPlayer file — flag it as a mistake if you catch yourself adding one.
 
 PRODUCTIVITY / DATA APPS (todo, notes, journal, habit, finance, calendar):
 - MUST include a real persistence layer file (SwiftData @Model or UserDefaults JSON store). Plan it explicitly.
@@ -1927,45 +1956,66 @@ Generate Swift sources only. Place every file under ${appTargetName}/. Always in
           repairTargets,
         );
         if (repaired.length > 0) {
-          // Replace and re-normalize
-          const merged = mergeFiles(filesToInsert, repaired);
+          // Re-normalize the proposed merged set BEFORE committing it.
+          const proposed = mergeFiles(filesToInsert, repaired);
           const renormalized = normalizeIosProject(
-            merged.map(f => ({ filename: f.filename, filepath: f.filepath, content: f.content, language: f.language })),
+            proposed.map(f => ({ filename: f.filename, filepath: f.filepath, content: f.content, language: f.language })),
             appTargetName,
             project.name,
             validDeps,
           );
-          await db.delete(projectFilesTable).where(eq(projectFilesTable.projectId, id));
-          const newRows = renormalized.map(f => ({
-            projectId: id,
-            filename: f.filename,
-            filepath: f.filepath,
-            content: f.content,
-            language: f.language || "swift",
-          }));
-          if (newRows.length > 0) {
-            await db.insert(projectFilesTable).values(newRows);
-          }
-          // Re-run validation
+          // Re-run validation on the proposed set (do NOT touch the DB yet).
           const before = report;
-          report = await runAccuracyValidation(
+          const proposedReport = await runAccuracyValidation(
             req.log,
             promptForValidation,
             approvedPlan,
-            newRows.map(f => ({ filename: f.filename, filepath: f.filepath, content: f.content })),
+            renormalized.map(f => ({ filename: f.filename, filepath: f.filepath, content: f.content })),
           );
+
+          // Gate: only commit the repair if it actually improves (or at least
+          // ties) the score. The validator is noisy, so allow a small tolerance
+          // — but NEVER let a regression land. This prevents the 62→48 churn.
+          const SCORE_TOLERANCE = 2;
+          const accepted = proposedReport.overallScore >= before.overallScore - SCORE_TOLERANCE;
+
+          if (accepted) {
+            await db.delete(projectFilesTable).where(eq(projectFilesTable.projectId, id));
+            const newRows = renormalized.map(f => ({
+              projectId: id,
+              filename: f.filename,
+              filepath: f.filepath,
+              content: f.content,
+              language: f.language || "swift",
+            }));
+            if (newRows.length > 0) {
+              await db.insert(projectFilesTable).values(newRows);
+            }
+            report = proposedReport;
+            finalFileCount = newRows.length;
+            await db
+              .update(projectsTable)
+              .set({ fileCount: newRows.length })
+              .where(eq(projectsTable.id, id));
+          } else {
+            req.log.info(
+              { beforeScore: before.overallScore, afterScore: proposedReport.overallScore, targets: repairTargets },
+              "Repair pass rejected — score regression beyond tolerance; keeping original files",
+            );
+            sendEvent({
+              type: "repair_rejected",
+              message: `Repair rolled back (score would drop ${before.overallScore} → ${proposedReport.overallScore}); keeping original files.`,
+              beforeScore: before.overallScore,
+              afterScore: proposedReport.overallScore,
+            });
+          }
           repairHistory.push({
             at: new Date().toISOString(),
             targets: repairTargets,
             before,
-            after: report,
+            after: accepted ? proposedReport : before,
           });
           sendEvent({ type: "repair_complete", report, history: repairHistory });
-          finalFileCount = newRows.length;
-          await db
-            .update(projectsTable)
-            .set({ fileCount: newRows.length })
-            .where(eq(projectsTable.id, id));
         }
       } catch (repairErr) {
         req.log.error({ repairErr }, "Repair pass failed; continuing with original output");
