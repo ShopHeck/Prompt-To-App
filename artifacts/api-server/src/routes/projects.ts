@@ -15,7 +15,6 @@ import {
   AnswerClarificationsParams,
   AnswerClarificationsBody,
 } from "@workspace/api-zod";
-import { openai } from "@workspace/integrations-openai-ai-server";
 import { IOS_QUALITY_STANDARDS } from "../lib/ios-quality-standards";
 import { normalizeIosProject } from "../lib/xcode-scaffold";
 import {
@@ -27,9 +26,38 @@ import {
   detectAmbiguityAndAskQuestions,
   buildEnrichedPrompt,
 } from "../lib/ai-pipeline";
+import {
+  streamAI,
+  callAI,
+  callWithFallback,
+  resolveProvider,
+  getAvailableProviders,
+  DEFAULT_MODELS,
+  FALLBACK_MODELS,
+  type Provider,
+} from "../lib/ai-client";
+import { EXAMPLE_PROMPTS } from "../lib/prompt-templates";
+import { PATTERN_MENU, getSelectedPatterns } from "../lib/component-library";
 import type { ArchitecturePlan, SpmDependency, AccuracyReport } from "../lib/types";
 
 const router: IRouter = Router();
+
+// ── AI providers route ──────────────────────────────────────────────────────
+
+router.get("/providers", (_req, res) => {
+  const available = getAvailableProviders();
+  const models: Record<string, { planner: string; engineer: string; reviewer: string }> = {};
+  for (const p of available) {
+    models[p] = DEFAULT_MODELS[p];
+  }
+  res.json({ providers: available, default: available[0] ?? null, models });
+});
+
+// ── Prompt templates route ───────────────────────────────────────────────────
+
+router.get("/templates", (_req, res) => {
+  res.json(EXAMPLE_PROMPTS);
+});
 
 // ── CRUD routes ─────────────────────────────────────────────────────────────
 
@@ -327,6 +355,7 @@ async function runPlanningPhase(
   projectName: string,
   frameworkName: string,
   additionalContext: string | null,
+  provider: Provider = "openai",
 ): Promise<void> {
   const contextBlock = additionalContext
     ? `\nAdditional context from the user: ${additionalContext}`
@@ -350,8 +379,17 @@ Output ONLY a valid JSON object with this exact structure:
   "spmDependencies": [],
   "fileList": [
     { "filename": "FileName.swift", "purpose": "One-line description of the file's role and notable details" }
-  ]
+  ],
+  "componentPatterns": ["pattern_id_1", "pattern_id_2"]
 }
+
+═══ PREMIUM COMPONENT LIBRARY ═══
+Select 4-7 component patterns from the library below to include in the project.
+These are production-ready SwiftUI components injected into the Engineer prompt.
+Choose patterns that match the app's visual style and interaction needs.
+
+Available patterns:
+${PATTERN_MENU}
 
 ═══ DOMAIN-SPECIFIC ENGINE FILES (mandatory for complex domains) ═══
 
@@ -408,22 +446,20 @@ Description: ${promptForPlanning}${contextBlock}
 
 Produce the JSON architecture plan now.`;
 
-  const planStream = await openai.chat.completions.create({
-    model: "gpt-5.4",
-    max_completion_tokens: 4096,
-    messages: [
-      { role: "system", content: planningSystemPrompt },
-      { role: "user", content: planningUserMessage },
-    ],
-    stream: true,
+  const models = DEFAULT_MODELS[provider];
+  const planStream = streamAI({
+    provider,
+    model: models.planner,
+    system: planningSystemPrompt,
+    userMessage: planningUserMessage,
+    maxTokens: 4096,
   });
 
   let planRaw = "";
   for await (const chunk of planStream) {
-    const content = chunk.choices[0]?.delta?.content;
-    if (content) {
-      planRaw += content;
-      sendEvent({ type: "planning_chunk", chunk: content });
+    if (chunk.content) {
+      planRaw += chunk.content;
+      sendEvent({ type: "planning_chunk", chunk: chunk.content });
     }
   }
 
@@ -441,6 +477,7 @@ Produce the JSON architecture plan now.`;
       navigation: typeof candidate.navigation === "string" ? candidate.navigation : "",
       spmDependencies: Array.isArray(candidate.spmDependencies) ? candidate.spmDependencies : [],
       fileList: Array.isArray(candidate.fileList) ? candidate.fileList : [],
+      componentPatterns: Array.isArray(candidate.componentPatterns) ? candidate.componentPatterns : [],
     };
   } catch (planParseErr) {
     reqLog.error({ planParseErr }, "Failed to parse architecture plan — aborting generation");
@@ -469,6 +506,7 @@ router.post("/projects/:id/generate", async (req, res) => {
   const { id } = GenerateAppParams.parse(req.params);
   const body = GenerateAppBody.safeParse(req.body);
   const additionalContext = body.success ? body.data.additionalContext ?? null : null;
+  const provider = resolveProvider((req.query as Record<string, string>).provider);
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -514,7 +552,7 @@ router.post("/projects/:id/generate", async (req, res) => {
     sendEvent({ type: "clarify_check", message: "Checking prompt for ambiguity..." });
     let clarify: { needsClarification: boolean; questions: Array<{ id: string; question: string; suggestion?: string }> };
     try {
-      clarify = await detectAmbiguityAndAskQuestions(project.prompt, frameworkName);
+      clarify = await detectAmbiguityAndAskQuestions(project.prompt, frameworkName, provider);
     } catch (clarifyErr) {
       req.log.error({ clarifyErr }, "Clarify-phase failed; proceeding directly to planning");
       clarify = { needsClarification: false, questions: [] };
@@ -552,6 +590,7 @@ router.post("/projects/:id/generate", async (req, res) => {
       project.name,
       frameworkName,
       additionalContext,
+      provider,
     );
     return;
   } catch (err) {
@@ -627,6 +666,7 @@ router.post("/projects/:id/answer-clarifications", async (req, res) => {
       project.name,
       frameworkName,
       additionalContext ?? null,
+      resolveProvider((req.query as Record<string, string>).provider),
     );
   } catch (err) {
     req.log.error({ err }, "Answer-clarifications phase failed");
@@ -653,6 +693,7 @@ router.post("/projects/:id/approve-plan", async (req, res) => {
   }
 
   const { plan: approvedPlan, additionalContext } = body.data;
+  const provider = resolveProvider((req.query as Record<string, string>).provider);
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -807,7 +848,9 @@ GENERAL RULES:
 - All filepaths must use the ${appTargetName}/ prefix (e.g. "${appTargetName}/ContentView.swift", "${appTargetName}/Components/PrimaryButton.swift").
 - The code MUST compile cleanly against iOS 17+ with Xcode 15+ — no experimental APIs, no deprecated symbols.
 ${IOS_QUALITY_STANDARDS}
-SELF-AUDIT before returning the JSON (SwiftUI projects only — skip for UIKit): scan every generated SwiftUI VIEW file for actual code usage (not occurrences inside string literals or comments) of these deprecated patterns and rewrite with modern equivalents before emitting JSON: \`ObservableObject\` / \`@Published\` / \`@StateObject\`, \`NavigationView\`, \`.navigationBarLeading\` / \`.navigationBarTrailing\`, \`.foregroundColor(\`, \`.cornerRadius(\`, \`.accentColor(\`, \`DispatchQueue.main.async\` / \`DispatchQueue.main.asyncAfter\`, \`UIScreen.main\`, \`String(format:\`, \`replacingOccurrences\`, \`PreviewProvider\`, \`.tabItem {\`, \`.font(.system(size:\`. \`UIImpactFeedbackGenerator\` / \`UINotificationFeedbackGenerator\` are allowed ONLY inside the Haptics helper file. \`Color(uiColor: UIColor { ... })\` is allowed ONLY inside the Theme/DesignSystem file.`;
+SELF-AUDIT before returning the JSON (SwiftUI projects only — skip for UIKit): scan every generated SwiftUI VIEW file for actual code usage (not occurrences inside string literals or comments) of these deprecated patterns and rewrite with modern equivalents before emitting JSON: \`ObservableObject\` / \`@Published\` / \`@StateObject\`, \`NavigationView\`, \`.navigationBarLeading\` / \`.navigationBarTrailing\`, \`.foregroundColor(\`, \`.cornerRadius(\`, \`.accentColor(\`, \`DispatchQueue.main.async\` / \`DispatchQueue.main.asyncAfter\`, \`UIScreen.main\`, \`String(format:\`, \`replacingOccurrences\`, \`PreviewProvider\`, \`.tabItem {\`, \`.font(.system(size:\`. \`UIImpactFeedbackGenerator\` / \`UINotificationFeedbackGenerator\` are allowed ONLY inside the Haptics helper file. \`Color(uiColor: UIColor { ... })\` is allowed ONLY inside the Theme/DesignSystem file.
+
+${(approvedPlan as ArchitecturePlan).componentPatterns?.length ? getSelectedPatterns((approvedPlan as ArchitecturePlan).componentPatterns!) : ""}`;
 
     const userMessage = `Create a complete iOS ${frameworkName} app for: ${project.enrichedPrompt ?? project.prompt}${contextBlock}
 
@@ -816,15 +859,15 @@ Target name: ${appTargetName}
 
 Generate Swift sources only. Place every file under ${appTargetName}/. Always include ${appTargetName}App.swift as the @main entry point.`;
 
-    const stream = await openai.chat.completions.create({
-      model: "gpt-5.4",
-      max_completion_tokens: 65536,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userMessage },
-      ],
-      stream: true,
+    const models = DEFAULT_MODELS[provider];
+    const stream = streamAI({
+      provider,
+      model: models.engineer,
+      system: systemPrompt,
+      userMessage,
+      maxTokens: 65536,
+      responseFormat: "json",
+      timeoutMs: 300_000,
     });
 
     let fullResponse = "";
@@ -832,16 +875,14 @@ Generate Swift sources only. Place every file under ${appTargetName}/. Always in
     let finishReason: string | null = null;
 
     for await (const chunk of stream) {
-      const choice = chunk.choices[0];
-      const content = choice?.delta?.content;
-      if (content) {
-        fullResponse += content;
+      if (chunk.content) {
+        fullResponse += chunk.content;
         chunkCount++;
         if (chunkCount % 20 === 0) {
           sendEvent({ type: "progress", message: "Generating code..." });
         }
       }
-      if (choice?.finish_reason) finishReason = choice.finish_reason;
+      if (chunk.finishReason) finishReason = chunk.finishReason;
     }
 
     sendEvent({ type: "parsing", message: "Parsing generated files..." });
@@ -930,6 +971,7 @@ Generate Swift sources only. Place every file under ${appTargetName}/. Always in
       promptForValidation,
       approvedPlan,
       filesToInsert.map(f => ({ filename: f.filename, filepath: f.filepath, content: f.content })),
+      provider,
     );
     sendEvent({ type: "accuracy_report", report });
 
@@ -948,6 +990,7 @@ Generate Swift sources only. Place every file under ${appTargetName}/. Always in
           approvedPlan,
           filesToInsert.map(f => ({ filename: f.filename, filepath: f.filepath, content: f.content, language: f.language })),
           repairTargets,
+          provider,
         );
         if (repaired.length > 0) {
           const proposed = mergeFiles(filesToInsert, repaired);
@@ -963,6 +1006,7 @@ Generate Swift sources only. Place every file under ${appTargetName}/. Always in
             promptForValidation,
             approvedPlan,
             renormalized.map(f => ({ filename: f.filename, filepath: f.filepath, content: f.content })),
+            provider,
           );
 
           const SCORE_TOLERANCE = 2;
@@ -1025,6 +1069,7 @@ Generate Swift sources only. Place every file under ${appTargetName}/. Always in
         promptForValidation,
         approvedPlan,
         finalFiles.map(f => ({ filename: f.filename, filepath: f.filepath, content: f.content })),
+        provider,
       );
     } catch (previewErr) {
       req.log.error({ previewErr }, "Live preview generation threw");
