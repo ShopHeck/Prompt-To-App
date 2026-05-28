@@ -11,7 +11,6 @@ const router: IRouter = Router();
 
 router.post("/projects/:id/generate-web", generationLimiter, enforceQuota, async (req, res) => {
   const id = Number(req.params.id);
-  const provider = resolveProvider((req.query as Record<string, string>).provider);
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -23,6 +22,14 @@ router.post("/projects/:id/generate-web", generationLimiter, enforceQuota, async
   };
 
   try {
+    let provider: Provider;
+    try {
+      provider = resolveProvider((req.query as Record<string, string>).provider);
+    } catch (providerErr) {
+      sendEvent({ type: "error", message: "No AI provider configured. Set OPENAI_API_KEY, GEMINI_API_KEY, or ANTHROPIC_API_KEY." });
+      res.end();
+      return;
+    }
     const [project] = await db
       .select()
       .from(projectsTable)
