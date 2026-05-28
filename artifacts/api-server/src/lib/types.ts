@@ -11,6 +11,7 @@ export interface ArchitecturePlan {
   navigation: string;
   spmDependencies: SpmDependency[];
   fileList: Array<{ filename: string; purpose: string }>;
+  componentPatterns?: string[];
 }
 
 export type GeneratedFile = {

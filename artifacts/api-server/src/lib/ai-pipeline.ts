@@ -1,5 +1,5 @@
 import vm from "node:vm";
-import { openai } from "@workspace/integrations-openai-ai-server";
+import { callAI, callWithFallback, DEFAULT_MODELS, FALLBACK_MODELS, type Provider, type AICallOptions } from "./ai-client";
 import { IOS_QUALITY_STANDARDS } from "./ios-quality-standards";
 import type {
   ArchitecturePlan,
@@ -46,6 +46,7 @@ export async function runAccuracyValidation(
   enrichedPrompt: string,
   plan: ArchitecturePlan,
   files: Array<{ filename: string; filepath: string; content: string }>,
+  provider: Provider = "openai",
 ): Promise<AccuracyReport> {
   const FILE_PREVIEW_CAP = 1800;
   const fileSummary = files
@@ -121,15 +122,13 @@ ${fileSummary}
 Produce the JSON report now.`;
 
   try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-5.4",
-      max_completion_tokens: 2400,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userMessage },
-      ],
-    });
-    const raw = completion.choices[0]?.message?.content ?? "";
+    const models = DEFAULT_MODELS[provider];
+    const fallbacks = FALLBACK_MODELS[provider];
+    const result = await callWithFallback(
+      { provider, model: models.reviewer, system: systemPrompt, userMessage, maxTokens: 2400 },
+      fallbacks.reviewer,
+    );
+    const raw = result.content;
     const match = raw.match(/\{[\s\S]*\}/);
     if (!match) throw new Error("No JSON in validation response");
     const parsed = JSON.parse(match[0]) as AccuracyReport;
@@ -178,6 +177,7 @@ export async function runRepairPass(
   plan: ArchitecturePlan,
   existingFiles: Array<{ filename: string; filepath: string; content: string; language: string }>,
   targets: string[],
+  provider: Provider = "openai",
 ): Promise<Array<{ filename: string; filepath: string; content: string; language: string }>> {
   const existingSummary = existingFiles
     .map(f => `- ${f.filepath}`)
@@ -234,15 +234,13 @@ ${targets.map(t => `- ${t}`).join("\n")}
 
 Output JSON now.`;
 
-  const completion = await openai.chat.completions.create({
-    model: "gpt-5.4",
-    max_completion_tokens: 12000,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userMessage },
-    ],
-  });
-  const raw = completion.choices[0]?.message?.content ?? "";
+  const models = DEFAULT_MODELS[provider];
+  const fallbacks = FALLBACK_MODELS[provider];
+  const result = await callWithFallback(
+    { provider, model: models.engineer, system: systemPrompt, userMessage, maxTokens: 12000 },
+    fallbacks.engineer,
+  );
+  const raw = result.content;
   const match = raw.match(/\{[\s\S]*\}/);
   if (!match) {
     reqLog.error("Repair pass returned no JSON");
@@ -271,6 +269,7 @@ export async function runLivePreviewGeneration(
   enrichedPrompt: string,
   plan: ArchitecturePlan,
   files: Array<{ filename: string; filepath: string; content: string }>,
+  provider: Provider = "openai",
 ): Promise<string | null> {
   const viewFiles = files
     .filter(f => /view|screen|app\.swift$/i.test(f.filename) || f.filepath.toLowerCase().includes("view"))
@@ -355,15 +354,13 @@ Produce the HTML preview now.`;
   };
 
   try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-5.4",
-      max_completion_tokens: 14000,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userMessage },
-      ],
-    });
-    const raw = completion.choices[0]?.message?.content ?? "";
+    const models = DEFAULT_MODELS[provider];
+    const fallbacks = FALLBACK_MODELS[provider];
+    const result = await callWithFallback(
+      { provider, model: models.engineer, system: systemPrompt, userMessage, maxTokens: 14000 },
+      fallbacks.engineer,
+    );
+    const raw = result.content;
     let html = cleanHtml(raw);
     if (!html) {
       reqLog.error("Live preview AI output missing <html> tag");
@@ -373,12 +370,13 @@ Produce the HTML preview now.`;
     const jsError = findScriptSyntaxError(html);
     if (jsError) {
       reqLog.error({ jsError: jsError.error }, "Live preview JS has syntax error — attempting one-shot repair");
-      const repairCompletion = await openai.chat.completions.create({
-        model: "gpt-5.4",
-        max_completion_tokens: 14000,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userMessage },
+      const repairResult = await callAI({
+        provider,
+        model: models.engineer,
+        system: systemPrompt,
+        userMessage,
+        maxTokens: 14000,
+        extraMessages: [
           { role: "assistant", content: html },
           {
             role: "user",
@@ -386,7 +384,7 @@ Produce the HTML preview now.`;
           },
         ],
       });
-      const repairedRaw = repairCompletion.choices[0]?.message?.content ?? "";
+      const repairedRaw = repairResult.content;
       const repairedHtml = cleanHtml(repairedRaw);
       if (repairedHtml) {
         const stillBroken = findScriptSyntaxError(repairedHtml);
@@ -425,6 +423,7 @@ export function mergeFiles(
 export async function detectAmbiguityAndAskQuestions(
   prompt: string,
   frameworkName: string,
+  provider: Provider = "openai",
 ): Promise<{ needsClarification: boolean; questions: ClarifyingQuestion[] }> {
   const systemPrompt = `You are an iOS product manager who decides whether a user's app idea is clear enough to plan, or whether it needs 3-5 quick clarifying questions first.
 
@@ -449,16 +448,14 @@ User prompt: ${prompt}
 
 Decide.`;
 
-  const completion = await openai.chat.completions.create({
-    model: "gpt-5.4",
-    max_completion_tokens: 800,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userMessage },
-    ],
-  });
+  const models = DEFAULT_MODELS[provider];
+  const fallbacks = FALLBACK_MODELS[provider];
+  const result = await callWithFallback(
+    { provider, model: models.planner, system: systemPrompt, userMessage, maxTokens: 800 },
+    fallbacks.planner,
+  );
 
-  const raw = completion.choices[0]?.message?.content ?? "";
+  const raw = result.content;
   const match = raw.match(/\{[\s\S]*\}/);
   if (!match) {
     return { needsClarification: false, questions: [] };
