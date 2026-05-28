@@ -6,8 +6,6 @@ interface RateLimitConfig {
   message?: string;
 }
 
-const ipHits = new Map<string, number[]>();
-
 function getClientIp(req: Request): string {
   const forwarded = req.headers["x-forwarded-for"];
   if (typeof forwarded === "string") return forwarded.split(",")[0]!.trim();
@@ -15,23 +13,21 @@ function getClientIp(req: Request): string {
   return req.ip ?? "unknown";
 }
 
-function pruneStale(): void {
-  const now = Date.now();
-  for (const [ip, hits] of ipHits) {
-    const recent = hits.filter((t) => now - t < 120_000);
-    if (recent.length === 0) {
-      ipHits.delete(ip);
-    } else {
-      ipHits.set(ip, recent);
-    }
-  }
-}
-
-// Prune every 5 minutes to prevent memory growth
-setInterval(pruneStale, 5 * 60 * 1000).unref();
-
 export function rateLimit(config: RateLimitConfig) {
   const { windowMs, maxRequests, message } = config;
+  const ipHits = new Map<string, number[]>();
+
+  setInterval(() => {
+    const now = Date.now();
+    for (const [ip, hits] of ipHits) {
+      const recent = hits.filter((t) => now - t < windowMs);
+      if (recent.length === 0) {
+        ipHits.delete(ip);
+      } else {
+        ipHits.set(ip, recent);
+      }
+    }
+  }, 5 * 60 * 1000).unref();
 
   return (req: Request, res: Response, next: NextFunction): void => {
     const ip = getClientIp(req);
