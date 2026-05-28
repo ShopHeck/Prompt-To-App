@@ -22,14 +22,6 @@ router.post("/projects/:id/generate-web", generationLimiter, enforceQuota, async
   };
 
   try {
-    let provider: Provider;
-    try {
-      provider = resolveProvider((req.query as Record<string, string>).provider);
-    } catch (providerErr) {
-      sendEvent({ type: "error", message: "No AI provider configured. Set OPENAI_API_KEY, GEMINI_API_KEY, or ANTHROPIC_API_KEY." });
-      res.end();
-      return;
-    }
     const [project] = await db
       .select()
       .from(projectsTable)
@@ -43,6 +35,15 @@ router.post("/projects/:id/generate-web", generationLimiter, enforceQuota, async
 
     if (project.framework !== "react") {
       sendEvent({ type: "error", message: "Project framework must be 'react' for web generation" });
+      res.end();
+      return;
+    }
+
+    let provider: Provider;
+    try {
+      provider = resolveProvider((req.query as Record<string, string>).provider);
+    } catch {
+      sendEvent({ type: "error", message: "No AI provider configured. Set OPENAI_API_KEY, GEMINI_API_KEY, or ANTHROPIC_API_KEY." });
       res.end();
       return;
     }
