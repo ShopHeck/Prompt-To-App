@@ -4,6 +4,7 @@ import { z } from "zod/v4";
 
 export const projectsTable = pgTable("projects", {
   id: serial("id").primaryKey(),
+  userId: integer("user_id"),
   name: text("name").notNull(),
   prompt: text("prompt").notNull(),
   description: text("description"),
@@ -18,6 +19,7 @@ export const projectsTable = pgTable("projects", {
   accuracyReport: text("accuracy_report"),
   repairHistory: text("repair_history"),
   livePreviewHtml: text("live_preview_html"),
+  qualityReport: text("quality_report"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });

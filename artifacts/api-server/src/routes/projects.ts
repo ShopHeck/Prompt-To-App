@@ -38,6 +38,9 @@ import {
 } from "../lib/ai-client";
 import { EXAMPLE_PROMPTS } from "../lib/prompt-templates";
 import { PATTERN_MENU, getSelectedPatterns } from "../lib/component-library";
+import { evaluateQuality, type QualityReport } from "../lib/quality-scorer";
+import { generationLimiter } from "../middleware/rate-limit";
+import { enforceQuota, incrementUsage } from "../middleware/quota";
 import type { ArchitecturePlan, SpmDependency, AccuracyReport } from "../lib/types";
 
 const router: IRouter = Router();
@@ -85,6 +88,7 @@ router.post("/projects", async (req, res) => {
         framework: body.framework,
         status: "pending",
         fileCount: 0,
+        userId: req.user?.id ?? null,
       })
       .returning();
     res.status(201).json(project);
@@ -502,7 +506,7 @@ Produce the JSON architecture plan now.`;
 
 // ── Generation routes (SSE streaming) ───────────────────────────────────────
 
-router.post("/projects/:id/generate", async (req, res) => {
+router.post("/projects/:id/generate", generationLimiter, enforceQuota, async (req, res) => {
   const { id } = GenerateAppParams.parse(req.params);
   const body = GenerateAppBody.safeParse(req.body);
   const additionalContext = body.success ? body.data.additionalContext ?? null : null;
@@ -683,7 +687,7 @@ router.post("/projects/:id/answer-clarifications", async (req, res) => {
 
 // ── Approve plan + code generation (SSE streaming) ──────────────────────────
 
-router.post("/projects/:id/approve-plan", async (req, res) => {
+router.post("/projects/:id/approve-plan", generationLimiter, enforceQuota, async (req, res) => {
   const { id } = ApprovePlanParams.parse(req.params);
   const body = ApprovePlanBody.safeParse(req.body);
 
@@ -1075,6 +1079,35 @@ Generate Swift sources only. Place every file under ${appTargetName}/. Always in
       req.log.error({ previewErr }, "Live preview generation threw");
     }
 
+    // ── Quality scoring (6-dimension evaluation) ──────────────────────────────
+    sendEvent({ type: "quality_scoring", message: "Evaluating visual quality..." });
+    let qualityReport: QualityReport | null = null;
+    try {
+      const finalFilesForQuality = await db
+        .select()
+        .from(projectFilesTable)
+        .where(eq(projectFilesTable.projectId, id));
+      qualityReport = await evaluateQuality(
+        req.log,
+        approvedPlan,
+        finalFilesForQuality.map(f => ({ filename: f.filename, filepath: f.filepath, content: f.content })),
+        livePreviewHtml,
+        provider,
+      );
+      if (qualityReport) {
+        sendEvent({ type: "quality_report", report: qualityReport });
+      }
+    } catch (qualityErr) {
+      req.log.error({ qualityErr }, "Quality scoring failed (non-fatal)");
+    }
+
+    // ── Increment usage for authenticated users ─────────────────────────────
+    if (req.user) {
+      try {
+        await incrementUsage(req.user.id);
+      } catch { /* non-fatal */ }
+    }
+
     await db
       .update(projectsTable)
       .set({
@@ -1083,6 +1116,7 @@ Generate Swift sources only. Place every file under ${appTargetName}/. Always in
         accuracyReport: JSON.stringify(report),
         repairHistory: JSON.stringify(repairHistory),
         livePreviewHtml,
+        qualityReport: qualityReport ? JSON.stringify(qualityReport) : null,
       })
       .where(eq(projectsTable.id, id));
 
@@ -1095,6 +1129,7 @@ Generate Swift sources only. Place every file under ${appTargetName}/. Always in
       accuracyReport: report,
       repairHistory,
       previewAvailable: !!livePreviewHtml,
+      qualityReport,
     });
     res.end();
   } catch (err) {
