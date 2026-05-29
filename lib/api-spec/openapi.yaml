@@ -329,7 +329,7 @@ components:
           enum: [pending, awaiting_clarification, generating, awaiting_approval, complete, error]
         framework:
           type: string
-          enum: [swiftui, uikit]
+          enum: [swiftui, uikit, react]
         fileCount:
           type: integer
         architecturePlan:
@@ -377,7 +377,7 @@ components:
           type: string
         framework:
           type: string
-          enum: [swiftui, uikit]
+          enum: [swiftui, uikit, react]
       required:
         - name
         - prompt

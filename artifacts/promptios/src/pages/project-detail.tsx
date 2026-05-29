@@ -12,10 +12,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   FileCode, Play, RotateCw, AlertTriangle, File, CheckCircle2,
   Copy, Download, Code2, Cpu, Share2, Check, Layers, Hammer, PencilLine,
-  FolderTree, Smartphone, ArrowUpRight
+  FolderTree, Smartphone, ArrowUpRight, MessageSquare
 } from "lucide-react";
 import { Link } from "wouter";
 import { PhonePreview } from "@/components/phone-preview";
+import { RefinementChat } from "@/components/refinement-chat";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle, SheetClose } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -786,6 +787,23 @@ export default function ProjectDetail() {
                   <Download className="h-3 w-3" strokeWidth={2} />
                   <span className="hidden sm:inline">.zip</span>
                 </Button>
+                <Sheet>
+                  <SheetTrigger asChild>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1.5 rounded-md font-mono text-xs active:scale-[0.97]"
+                      title="Refine with AI"
+                    >
+                      <MessageSquare className="h-3 w-3" strokeWidth={2} />
+                      <span className="hidden sm:inline">Refine</span>
+                    </Button>
+                  </SheetTrigger>
+                  <SheetContent side="right" className="w-[400px] sm:w-[440px] border-l border-border bg-sidebar p-0">
+                    <SheetTitle className="sr-only">Refinement Chat</SheetTitle>
+                    <RefinementChat projectId={projectId} />
+                  </SheetContent>
+                </Sheet>
               </>
             )}
             {isAwaitingApproval && (
