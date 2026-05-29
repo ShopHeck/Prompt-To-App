@@ -251,7 +251,7 @@ export default function AppStoreGuide() {
     <Layout>
       <div className="mx-auto w-full max-w-3xl px-5 py-8 sm:px-8 md:py-12 animate-in fade-in duration-500">
         <Link
-          href="/"
+          href="/dashboard"
           className="inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-widest text-muted-foreground transition-colors hover:text-foreground"
         >
           <ArrowLeft className="h-3 w-3" strokeWidth={2} />

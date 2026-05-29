@@ -15,7 +15,7 @@ interface LayoutProps {
 function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
   const [location] = useLocation();
   const items = [
-    { href: "/", label: "Dashboard", icon: LayoutDashboard, tour: undefined },
+    { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, tour: undefined },
     { href: "/projects/new", label: "New project", icon: Plus, tour: "new-project" },
     { href: "/templates", label: "Templates", icon: Sparkles, tour: undefined },
     { href: "/pricing", label: "Pricing", icon: CreditCard, tour: undefined },
@@ -110,7 +110,7 @@ function UserSection({ onNavigate }: { onNavigate?: () => void }) {
         onClick={async () => {
           onNavigate?.();
           await logout();
-          setLocation("/");
+          setLocation("/dashboard");
         }}
         className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm text-muted-foreground transition-all duration-200 hover:bg-secondary/40 hover:text-foreground active:scale-[0.98]"
       >
@@ -126,7 +126,7 @@ function SidebarBody({ onNavigate }: { onNavigate?: () => void }) {
     <div className="flex h-full flex-col">
       <div className="flex h-14 items-center border-b border-border px-4 shrink-0">
         <Link
-          href="/"
+          href="/dashboard"
           onClick={onNavigate}
           className="flex items-center gap-2 transition-opacity hover:opacity-80 active:scale-[0.98]"
         >
@@ -177,7 +177,7 @@ export function Layout({ children }: LayoutProps) {
 
       {/* Mobile top bar */}
       <div className="md:hidden fixed inset-x-0 top-0 z-40 flex h-14 items-center justify-between border-b border-border bg-background/85 px-4 backdrop-blur-md">
-        <Link href="/" className="flex items-center gap-2 active:scale-[0.98] transition-transform">
+        <Link href="/dashboard" className="flex items-center gap-2 active:scale-[0.98] transition-transform">
           <div className="relative flex h-7 w-7 items-center justify-center rounded-md bg-primary/10 ring-1 ring-primary/30">
             <Terminal className="h-3.5 w-3.5 text-primary" strokeWidth={2} />
           </div>

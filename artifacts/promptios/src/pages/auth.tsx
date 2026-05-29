@@ -52,7 +52,7 @@ export default function AuthPage() {
     setError(null);
     try {
       await login(data);
-      setLocation("/");
+      setLocation("/dashboard");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Login failed");
     }
@@ -62,7 +62,7 @@ export default function AuthPage() {
     setError(null);
     try {
       await register(data);
-      setLocation("/");
+      setLocation("/dashboard");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Registration failed");
     }
