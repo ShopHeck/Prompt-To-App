@@ -10,10 +10,20 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: auth
+    description: Authentication and session management
+  - name: billing
+    description: Stripe billing and subscription management
   - name: projects
     description: iOS app project operations
   - name: generate
     description: AI code generation operations
+  - name: refinement
+    description: AI-powered iterative code modification
+  - name: providers
+    description: AI provider configuration
+  - name: templates
+    description: Curated prompt templates
 paths:
   /healthz:
     get:
@@ -28,6 +38,250 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  # ── Auth ───────────────────────────────────────────────────────────────────
+
+  /auth/register:
+    post:
+      operationId: register
+      tags: [auth]
+      summary: Create a new user account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterBody"
+      responses:
+        "201":
+          description: Account created, session cookie set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: Validation error
+        "409":
+          description: Email already exists
+
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Log in with email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginBody"
+      responses:
+        "200":
+          description: Authenticated, session cookie set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: Validation error
+        "401":
+          description: Invalid credentials
+
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Destroy current session
+      responses:
+        "200":
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                required: [ok]
+
+  /auth/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: Get current authenticated user and quota
+      responses:
+        "200":
+          description: Current user info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeResponse"
+        "401":
+          description: Not authenticated
+
+  /auth/password:
+    put:
+      operationId: changePassword
+      tags: [auth]
+      summary: Change password (requires authentication)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordBody"
+      responses:
+        "200":
+          description: Password changed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                required: [ok]
+        "401":
+          description: Not authenticated or wrong current password
+
+  # ── Billing ────────────────────────────────────────────────────────────────
+
+  /billing/plans:
+    get:
+      operationId: getPlans
+      tags: [billing]
+      summary: Get available subscription plans
+      responses:
+        "200":
+          description: Plan details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlansResponse"
+
+  /billing/checkout:
+    post:
+      operationId: createCheckout
+      tags: [billing]
+      summary: Create Stripe Checkout session (requires authentication)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CheckoutBody"
+      responses:
+        "200":
+          description: Checkout session URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+                required: [url]
+        "401":
+          description: Not authenticated
+        "503":
+          description: Stripe not configured
+
+  /billing/subscription:
+    get:
+      operationId: getSubscription
+      tags: [billing]
+      summary: Get current subscription info (requires authentication)
+      responses:
+        "200":
+          description: Subscription details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscriptionResponse"
+        "401":
+          description: Not authenticated
+
+  /billing/portal:
+    post:
+      operationId: createPortal
+      tags: [billing]
+      summary: Create Stripe Customer Portal session (requires authentication)
+      responses:
+        "200":
+          description: Portal session URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+                required: [url]
+        "400":
+          description: No billing account found
+        "401":
+          description: Not authenticated
+        "503":
+          description: Stripe not configured
+
+  /billing/webhook:
+    post:
+      operationId: stripeWebhook
+      tags: [billing]
+      summary: Stripe webhook endpoint (HMAC-verified)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Webhook processed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  received:
+                    type: boolean
+                required: [received]
+        "400":
+          description: Invalid signature
+        "503":
+          description: Webhook secret not configured
+
+  # ── Providers & Templates ──────────────────────────────────────────────────
+
+  /providers:
+    get:
+      operationId: getProviders
+      tags: [providers]
+      summary: Get available AI providers and their models
+      responses:
+        "200":
+          description: Provider list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProvidersResponse"
+
+  /templates:
+    get:
+      operationId: getTemplates
+      tags: [templates]
+      summary: Get curated prompt templates
+      responses:
+        "200":
+          description: Template list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PromptTemplate"
+
+  # ── Projects ───────────────────────────────────────────────────────────────
 
   /projects:
     get:
@@ -275,6 +529,109 @@ paths:
         "404":
           description: Not found
 
+  # ── Refinement ─────────────────────────────────────────────────────────────
+
+  /projects/{id}/refinements:
+    get:
+      operationId: getRefinements
+      tags: [refinement]
+      summary: Get refinement chat history for a project
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Refinement messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RefinementMessage"
+
+  /projects/{id}/refine:
+    post:
+      operationId: refineProject
+      tags: [refinement]
+      summary: Submit a refinement instruction (requires Pro/Studio plan)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefineBody"
+      responses:
+        "200":
+          description: Refinement result with changed files
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RefineResult"
+        "400":
+          description: Validation error or project has no files
+        "401":
+          description: Not authenticated
+        "403":
+          description: Requires Pro or Studio plan
+        "404":
+          description: Project not found
+
+  # ── Web Generation ────────────────────────────────────────────────────────
+
+  /projects/{id}/generate-web:
+    post:
+      operationId: generateWeb
+      tags: [generate]
+      summary: Generate a React + Tailwind web app (SSE stream, requires react framework)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: SSE stream of web generation events
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  # ── Download ──────────────────────────────────────────────────────────────
+
+  /projects/{id}/download:
+    get:
+      operationId: downloadProject
+      tags: [projects]
+      summary: Download project as a zip file
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Zip file
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: Not found or no files
+
+  # ── Stats & Recent ────────────────────────────────────────────────────────
+
   /projects/recent:
     get:
       operationId: getRecentProjects
@@ -502,6 +859,233 @@ components:
           type: ["string", "null"]
       required:
         - answers
+
+    # ── Auth schemas ──────────────────────────────────────────────────────────
+
+    RegisterBody:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        displayName:
+          type: string
+      required: [email, password]
+
+    LoginBody:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+      required: [email, password]
+
+    ChangePasswordBody:
+      type: object
+      properties:
+        currentPassword:
+          type: string
+        newPassword:
+          type: string
+          minLength: 8
+      required: [currentPassword, newPassword]
+
+    AuthUser:
+      type: object
+      properties:
+        id:
+          type: integer
+        email:
+          type: string
+        displayName:
+          type: ["string", "null"]
+        plan:
+          type: string
+          enum: [free, pro, studio]
+      required: [id, email, displayName, plan]
+
+    AuthResponse:
+      type: object
+      properties:
+        user:
+          $ref: "#/components/schemas/AuthUser"
+      required: [user]
+
+    Quota:
+      type: object
+      properties:
+        used:
+          type: integer
+        limit:
+          type: integer
+        resetsAt:
+          type: string
+      required: [used, limit, resetsAt]
+
+    MeResponse:
+      type: object
+      properties:
+        user:
+          $ref: "#/components/schemas/AuthUser"
+        quota:
+          $ref: "#/components/schemas/Quota"
+      required: [user]
+
+    # ── Billing schemas ────────────────────────────────────────────────────────
+
+    PlanInfo:
+      type: object
+      properties:
+        name:
+          type: string
+        price:
+          type: string
+        features:
+          type: array
+          items:
+            type: string
+      required: [name, price, features]
+
+    PlansResponse:
+      type: object
+      properties:
+        plans:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/PlanInfo"
+      required: [plans]
+
+    CheckoutBody:
+      type: object
+      properties:
+        plan:
+          type: string
+          enum: [pro, studio]
+      required: [plan]
+
+    SubscriptionResponse:
+      type: object
+      properties:
+        plan:
+          type: string
+        status:
+          type: string
+        currentPeriodEnd:
+          type: ["string", "null"]
+        usage:
+          type: integer
+        planDetails:
+          $ref: "#/components/schemas/PlanInfo"
+      required: [plan, status, usage, planDetails]
+
+    # ── Provider & Template schemas ────────────────────────────────────────────
+
+    ProviderModels:
+      type: object
+      properties:
+        planner:
+          type: string
+        engineer:
+          type: string
+        reviewer:
+          type: string
+      required: [planner, engineer, reviewer]
+
+    ProvidersResponse:
+      type: object
+      properties:
+        providers:
+          type: array
+          items:
+            type: string
+        default:
+          type: ["string", "null"]
+        models:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/ProviderModels"
+      required: [providers, default, models]
+
+    PromptTemplate:
+      type: object
+      properties:
+        label:
+          type: string
+        category:
+          type: string
+        tagline:
+          type: string
+        signature:
+          type: string
+        screens:
+          type: array
+          items:
+            type: string
+        accent:
+          type: string
+        emoji:
+          type: string
+        prompt:
+          type: string
+      required: [label, category, tagline, signature, screens, accent, emoji, prompt]
+
+    # ── Refinement schemas ─────────────────────────────────────────────────────
+
+    RefineBody:
+      type: object
+      properties:
+        instruction:
+          type: string
+          minLength: 1
+      required: [instruction]
+
+    RefinementMessage:
+      type: object
+      properties:
+        id:
+          type: integer
+        projectId:
+          type: integer
+        role:
+          type: string
+          enum: [user, assistant]
+        content:
+          type: string
+        filesChanged:
+          type: ["array", "null"]
+          items:
+            type: string
+        createdAt:
+          type: string
+      required: [id, projectId, role, content, createdAt]
+
+    RefineResult:
+      type: object
+      properties:
+        summary:
+          type: string
+        filesChanged:
+          type: array
+          items:
+            type: string
+        files:
+          type: array
+          items:
+            type: object
+            properties:
+              path:
+                type: string
+              content:
+                type: string
+            required: [path, content]
+      required: [summary, filesChanged]
+
+    # ── Project schemas ────────────────────────────────────────────────────────
 
     ProjectStats:
       type: object

@@ -15,6 +15,12 @@ function getClientIp(req: Request): string {
 
 export function rateLimit(config: RateLimitConfig) {
   const { windowMs, maxRequests, message } = config;
+
+  // Bypass rate limiting in test environment
+  if (process.env.NODE_ENV === "test") {
+    return (_req: Request, _res: Response, next: NextFunction): void => { next(); };
+  }
+
   const ipHits = new Map<string, number[]>();
 
   setInterval(() => {

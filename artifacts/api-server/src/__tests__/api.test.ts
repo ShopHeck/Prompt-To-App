@@ -1,0 +1,530 @@
+import { describe, it, expect, beforeEach } from "vitest";
+import request from "supertest";
+import app from "../app";
+
+// Helper to register a user and return agent with session cookie
+async function registerUser(
+  email = "test@example.com",
+  password = "testpass123",
+  displayName?: string,
+) {
+  const agent = request.agent(app);
+  const res = await agent
+    .post("/api/auth/register")
+    .send({ email, password, displayName });
+  return { agent, res };
+}
+
+// ── Health ────────────────────────────────────────────────────────────────────
+
+describe("GET /api/healthz", () => {
+  it("returns 200 with status ok", async () => {
+    const res = await request(app).get("/api/healthz");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ status: "ok" });
+  });
+});
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+
+describe("Auth endpoints", () => {
+  describe("POST /api/auth/register", () => {
+    it("creates a new user and returns session cookie", async () => {
+      const { res } = await registerUser();
+      expect(res.status).toBe(201);
+      expect(res.body.user).toMatchObject({
+        email: "test@example.com",
+        plan: "free",
+      });
+      expect(res.body.user.id).toBeDefined();
+      expect(res.headers["set-cookie"]).toBeDefined();
+    });
+
+    it("rejects duplicate email with 409", async () => {
+      await registerUser("dup@test.com");
+      const res = await request(app)
+        .post("/api/auth/register")
+        .send({ email: "dup@test.com", password: "testpass123" });
+      expect(res.status).toBe(409);
+      expect(res.body.error).toContain("already exists");
+    });
+
+    it("rejects missing email with 400", async () => {
+      const res = await request(app)
+        .post("/api/auth/register")
+        .send({ password: "testpass123" });
+      expect(res.status).toBe(400);
+    });
+
+    it("rejects short password with 400", async () => {
+      const res = await request(app)
+        .post("/api/auth/register")
+        .send({ email: "short@test.com", password: "abc" });
+      expect(res.status).toBe(400);
+    });
+
+    it("saves optional displayName", async () => {
+      const { agent } = await registerUser("name@test.com", "testpass123", "Test User");
+      const me = await agent.get("/api/auth/me");
+      expect(me.body.user.displayName).toBe("Test User");
+    });
+  });
+
+  describe("POST /api/auth/login", () => {
+    it("authenticates with correct credentials", async () => {
+      await registerUser("login@test.com", "mypassword1");
+      const agent = request.agent(app);
+      const res = await agent
+        .post("/api/auth/login")
+        .send({ email: "login@test.com", password: "mypassword1" });
+      expect(res.status).toBe(200);
+      expect(res.body.user.email).toBe("login@test.com");
+    });
+
+    it("rejects wrong password with 401", async () => {
+      await registerUser("wrong@test.com", "correctpw1");
+      const res = await request(app)
+        .post("/api/auth/login")
+        .send({ email: "wrong@test.com", password: "wrongpw123" });
+      expect(res.status).toBe(401);
+    });
+
+    it("rejects nonexistent user with 401", async () => {
+      const res = await request(app)
+        .post("/api/auth/login")
+        .send({ email: "nobody@test.com", password: "whatever1" });
+      expect(res.status).toBe(401);
+    });
+
+    it("rejects missing fields with 400", async () => {
+      const res = await request(app)
+        .post("/api/auth/login")
+        .send({ email: "x@x.com" });
+      expect(res.status).toBe(400);
+    });
+  });
+
+  describe("GET /api/auth/me", () => {
+    it("returns user + quota when authenticated", async () => {
+      const { agent } = await registerUser("me@test.com");
+      const res = await agent.get("/api/auth/me");
+      expect(res.status).toBe(200);
+      expect(res.body.user.email).toBe("me@test.com");
+      expect(res.body.quota).toBeDefined();
+      expect(res.body.quota.limit).toBeDefined();
+    });
+
+    it("returns 401 when unauthenticated", async () => {
+      const res = await request(app).get("/api/auth/me");
+      expect(res.status).toBe(401);
+    });
+  });
+
+  describe("POST /api/auth/logout", () => {
+    it("clears session", async () => {
+      const { agent } = await registerUser("out@test.com");
+      const logoutRes = await agent.post("/api/auth/logout");
+      expect(logoutRes.status).toBe(200);
+      expect(logoutRes.body.ok).toBe(true);
+      // After logout, /me should return 401
+      const meRes = await agent.get("/api/auth/me");
+      expect(meRes.status).toBe(401);
+    });
+  });
+
+  describe("PUT /api/auth/password", () => {
+    it("changes password for authenticated user", async () => {
+      const { agent } = await registerUser("pw@test.com", "oldpassword1");
+      const res = await agent
+        .put("/api/auth/password")
+        .send({ currentPassword: "oldpassword1", newPassword: "newpassword1" });
+      expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(true);
+
+      // Login with new password
+      const login = await request(app)
+        .post("/api/auth/login")
+        .send({ email: "pw@test.com", password: "newpassword1" });
+      expect(login.status).toBe(200);
+    });
+
+    it("rejects wrong current password with 401", async () => {
+      const { agent } = await registerUser("pw2@test.com", "original123");
+      const res = await agent
+        .put("/api/auth/password")
+        .send({ currentPassword: "wrong12345", newPassword: "new12345678" });
+      expect(res.status).toBe(401);
+    });
+
+    it("requires authentication", async () => {
+      const res = await request(app)
+        .put("/api/auth/password")
+        .send({ currentPassword: "old123456", newPassword: "new123456" });
+      expect(res.status).toBe(401);
+    });
+  });
+});
+
+// ── Billing ───────────────────────────────────────────────────────────────────
+
+describe("Billing endpoints", () => {
+  describe("GET /api/billing/plans", () => {
+    it("returns plan info", async () => {
+      const res = await request(app).get("/api/billing/plans");
+      expect(res.status).toBe(200);
+      expect(res.body.plans).toBeDefined();
+      expect(res.body.plans.free).toBeDefined();
+      expect(res.body.plans.pro).toBeDefined();
+      expect(res.body.plans.studio).toBeDefined();
+      expect(res.body.plans.pro.price).toBe("$29/mo");
+    });
+  });
+
+  describe("POST /api/billing/checkout", () => {
+    it("returns 503 when Stripe is not configured", async () => {
+      const { agent } = await registerUser("bill@test.com");
+      const res = await agent
+        .post("/api/billing/checkout")
+        .send({ plan: "pro" });
+      expect(res.status).toBe(503);
+      expect(res.body.error).toContain("Stripe");
+    });
+
+    it("requires authentication", async () => {
+      const res = await request(app)
+        .post("/api/billing/checkout")
+        .send({ plan: "pro" });
+      expect(res.status).toBe(401);
+    });
+  });
+
+  describe("GET /api/billing/subscription", () => {
+    it("returns subscription info for authenticated user", async () => {
+      const { agent } = await registerUser("sub@test.com");
+      const res = await agent.get("/api/billing/subscription");
+      expect(res.status).toBe(200);
+      expect(res.body.plan).toBe("free");
+      expect(res.body.usage).toBeDefined();
+    });
+
+    it("requires authentication", async () => {
+      const res = await request(app).get("/api/billing/subscription");
+      expect(res.status).toBe(401);
+    });
+  });
+
+  describe("POST /api/billing/portal", () => {
+    it("returns 503 when Stripe is not configured", async () => {
+      const { agent } = await registerUser("portal@test.com");
+      const res = await agent.post("/api/billing/portal");
+      // Should return 400 (no Stripe customer) or 503 (Stripe not configured)
+      expect([400, 503]).toContain(res.status);
+    });
+  });
+
+  describe("POST /api/billing/webhook", () => {
+    it("returns 503 when webhook secret is not configured", async () => {
+      const res = await request(app)
+        .post("/api/billing/webhook")
+        .set("Content-Type", "application/json")
+        .send(JSON.stringify({ type: "checkout.session.completed" }));
+      expect(res.status).toBe(503);
+    });
+  });
+});
+
+// ── Projects ──────────────────────────────────────────────────────────────────
+
+describe("Project endpoints", () => {
+  describe("POST /api/projects", () => {
+    it("creates a new project", async () => {
+      const res = await request(app)
+        .post("/api/projects")
+        .send({ name: "Test App", prompt: "A todo list app", framework: "swiftui" });
+      expect(res.status).toBe(201);
+      expect(res.body.name).toBe("Test App");
+      expect(res.body.prompt).toBe("A todo list app");
+      expect(res.body.framework).toBe("swiftui");
+      expect(res.body.status).toBe("pending");
+      expect(res.body.id).toBeDefined();
+    });
+
+    it("creates a React project", async () => {
+      const res = await request(app)
+        .post("/api/projects")
+        .send({ name: "Web App", prompt: "A dashboard", framework: "react" });
+      expect(res.status).toBe(201);
+      expect(res.body.framework).toBe("react");
+    });
+
+    it("rejects missing name", async () => {
+      const res = await request(app)
+        .post("/api/projects")
+        .send({ prompt: "test", framework: "swiftui" });
+      expect(res.status).toBe(400);
+    });
+  });
+
+  describe("GET /api/projects", () => {
+    it("returns all projects", async () => {
+      await request(app)
+        .post("/api/projects")
+        .send({ name: "App 1", prompt: "test", framework: "swiftui" });
+      await request(app)
+        .post("/api/projects")
+        .send({ name: "App 2", prompt: "test2", framework: "react" });
+      const res = await request(app).get("/api/projects");
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body)).toBe(true);
+      expect(res.body.length).toBe(2);
+    });
+  });
+
+  describe("GET /api/projects/:id", () => {
+    it("returns a project by ID", async () => {
+      const create = await request(app)
+        .post("/api/projects")
+        .send({ name: "Detail", prompt: "x", framework: "swiftui" });
+      const res = await request(app).get(`/api/projects/${create.body.id}`);
+      expect(res.status).toBe(200);
+      expect(res.body.name).toBe("Detail");
+    });
+
+    it("returns 404 for nonexistent project", async () => {
+      const res = await request(app).get("/api/projects/99999");
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe("DELETE /api/projects/:id", () => {
+    it("deletes a project", async () => {
+      const create = await request(app)
+        .post("/api/projects")
+        .send({ name: "Delete Me", prompt: "x", framework: "swiftui" });
+      const del = await request(app).delete(`/api/projects/${create.body.id}`);
+      expect(del.status).toBe(204);
+      const get = await request(app).get(`/api/projects/${create.body.id}`);
+      expect(get.status).toBe(404);
+    });
+  });
+
+  describe("GET /api/projects/:id/files", () => {
+    it("returns empty array for new project", async () => {
+      const create = await request(app)
+        .post("/api/projects")
+        .send({ name: "NoFiles", prompt: "x", framework: "swiftui" });
+      const res = await request(app).get(`/api/projects/${create.body.id}/files`);
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([]);
+    });
+  });
+
+  describe("POST /api/projects/:id/share", () => {
+    it("generates a share token", async () => {
+      const create = await request(app)
+        .post("/api/projects")
+        .send({ name: "ShareMe", prompt: "x", framework: "swiftui" });
+      const res = await request(app).post(`/api/projects/${create.body.id}/share`);
+      expect(res.status).toBe(200);
+      expect(res.body.token).toBeDefined();
+      expect(typeof res.body.token).toBe("string");
+      expect(res.body.url).toBeDefined();
+    });
+
+    it("returns same token on second call", async () => {
+      const create = await request(app)
+        .post("/api/projects")
+        .send({ name: "ShareTwice", prompt: "x", framework: "swiftui" });
+      const first = await request(app).post(`/api/projects/${create.body.id}/share`);
+      const second = await request(app).post(`/api/projects/${create.body.id}/share`);
+      expect(first.body.token).toBe(second.body.token);
+    });
+  });
+
+  describe("GET /api/share/:token", () => {
+    it("returns shared project", async () => {
+      const create = await request(app)
+        .post("/api/projects")
+        .send({ name: "Shared", prompt: "test share", framework: "swiftui" });
+      const share = await request(app).post(`/api/projects/${create.body.id}/share`);
+      const res = await request(app).get(`/api/share/${share.body.token}`);
+      expect(res.status).toBe(200);
+      expect(res.body.project.name).toBe("Shared");
+    });
+
+    it("returns 404 for invalid token", async () => {
+      const res = await request(app).get("/api/share/nonexistent-token");
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe("GET /api/projects/recent", () => {
+    it("returns up to 5 recent projects", async () => {
+      for (let i = 0; i < 7; i++) {
+        await request(app)
+          .post("/api/projects")
+          .send({ name: `App ${i}`, prompt: "x", framework: "swiftui" });
+      }
+      const res = await request(app).get("/api/projects/recent");
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body)).toBe(true);
+      expect(res.body.length).toBeLessThanOrEqual(5);
+    });
+  });
+
+  describe("GET /api/projects/stats", () => {
+    it("returns aggregate stats", async () => {
+      await request(app)
+        .post("/api/projects")
+        .send({ name: "Stats App", prompt: "x", framework: "swiftui" });
+      const res = await request(app).get("/api/projects/stats");
+      expect(res.status).toBe(200);
+      expect(res.body.totalProjects).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe("GET /api/projects/:id/preview", () => {
+    it("returns 404 when no preview exists", async () => {
+      const create = await request(app)
+        .post("/api/projects")
+        .send({ name: "NoPreview", prompt: "x", framework: "swiftui" });
+      const res = await request(app).get(`/api/projects/${create.body.id}/preview`);
+      expect(res.status).toBe(404);
+    });
+  });
+});
+
+// ── Providers ─────────────────────────────────────────────────────────────────
+
+describe("GET /api/providers", () => {
+  it("returns provider structure", async () => {
+    const res = await request(app).get("/api/providers");
+    expect(res.status).toBe(200);
+    expect(res.body.providers).toBeDefined();
+    expect(Array.isArray(res.body.providers)).toBe(true);
+    // providers is string[] of available providers; may be empty without API keys
+    expect(res.body).toHaveProperty("default");
+    expect(res.body).toHaveProperty("models");
+  });
+});
+
+// ── Templates ─────────────────────────────────────────────────────────────────
+
+describe("GET /api/templates", () => {
+  it("returns template list", async () => {
+    const res = await request(app).get("/api/templates");
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    expect(res.body.length).toBeGreaterThan(0);
+
+    const tmpl = res.body[0];
+    expect(tmpl.label).toBeDefined();
+    expect(tmpl.category).toBeDefined();
+    expect(tmpl.prompt).toBeDefined();
+  });
+});
+
+// ── Refinement ────────────────────────────────────────────────────────────────
+
+describe("Refinement endpoints", () => {
+  describe("GET /api/projects/:id/refinements", () => {
+    it("returns empty array for project with no refinements", async () => {
+      const create = await request(app)
+        .post("/api/projects")
+        .send({ name: "NoRefine", prompt: "x", framework: "swiftui" });
+      const res = await request(app).get(`/api/projects/${create.body.id}/refinements`);
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([]);
+    });
+  });
+
+  describe("POST /api/projects/:id/refine", () => {
+    it("requires authentication", async () => {
+      const create = await request(app)
+        .post("/api/projects")
+        .send({ name: "AuthRefine", prompt: "x", framework: "swiftui" });
+      const res = await request(app)
+        .post(`/api/projects/${create.body.id}/refine`)
+        .send({ instruction: "Add dark mode" });
+      expect(res.status).toBe(401);
+    });
+
+    it("rejects free plan users with 403", async () => {
+      const { agent } = await registerUser("freerefine@test.com");
+      const create = await agent
+        .post("/api/projects")
+        .send({ name: "FreeRefine", prompt: "x", framework: "swiftui" });
+      const res = await agent
+        .post(`/api/projects/${create.body.id}/refine`)
+        .send({ instruction: "Add dark mode" });
+      expect(res.status).toBe(403);
+      expect(res.body.error).toContain("Pro or Studio");
+    });
+
+    it("rejects empty instruction with 400", async () => {
+      const { agent } = await registerUser("valrefine@test.com");
+      const create = await agent
+        .post("/api/projects")
+        .send({ name: "ValRefine", prompt: "x", framework: "swiftui" });
+      const res = await agent
+        .post(`/api/projects/${create.body.id}/refine`)
+        .send({ instruction: "" });
+      expect(res.status).toBe(400);
+    });
+
+    it("returns 404 for nonexistent project", async () => {
+      const { agent } = await registerUser("missingrefine@test.com");
+      // Upgrade user plan to bypass free check
+      const me = await agent.get("/api/auth/me");
+      const pg = await import("pg");
+      const pool = new pg.default.Pool({ connectionString: process.env.DATABASE_URL });
+      await pool.query("UPDATE users SET plan = 'pro' WHERE id = $1", [me.body.user.id]);
+      await pool.end();
+
+      const res = await agent
+        .post("/api/projects/99999/refine")
+        .send({ instruction: "Add dark mode" });
+      expect(res.status).toBe(404);
+    });
+
+    it("returns 400 when project has no files", async () => {
+      const { agent } = await registerUser("nofiles@test.com");
+      const create = await agent
+        .post("/api/projects")
+        .send({ name: "EmptyRefine", prompt: "x", framework: "swiftui" });
+
+      // Upgrade plan
+      const me = await agent.get("/api/auth/me");
+      const pg = await import("pg");
+      const pool = new pg.default.Pool({ connectionString: process.env.DATABASE_URL });
+      await pool.query("UPDATE users SET plan = 'pro' WHERE id = $1", [me.body.user.id]);
+      await pool.end();
+
+      const res = await agent
+        .post(`/api/projects/${create.body.id}/refine`)
+        .send({ instruction: "Add dark mode" });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("no files");
+    });
+  });
+});
+
+// ── Web Generation ────────────────────────────────────────────────────────────
+
+describe("POST /api/projects/:id/generate-web", () => {
+  it("returns SSE error for non-react project", async () => {
+    const create = await request(app)
+      .post("/api/projects")
+      .send({ name: "iOSApp", prompt: "test", framework: "swiftui" });
+    const res = await request(app).post(`/api/projects/${create.body.id}/generate-web`);
+    // SSE endpoint returns 200 with error event in stream
+    expect(res.status).toBe(200);
+    expect(res.text).toContain("react");
+  });
+
+  it("returns SSE error for nonexistent project", async () => {
+    const res = await request(app).post("/api/projects/99999/generate-web");
+    expect(res.status).toBe(200);
+    expect(res.text).toContain("not found");
+  });
+});
