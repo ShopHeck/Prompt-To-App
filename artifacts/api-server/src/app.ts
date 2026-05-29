@@ -2,6 +2,8 @@ import express, { type Express } from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import pinoHttp from "pino-http";
+import path from "node:path";
+import fs from "node:fs";
 import router from "./routes";
 import { logger } from "./lib/logger";
 import { authMiddleware } from "./middleware/auth";
@@ -42,6 +44,16 @@ app.use(express.urlencoded({ extended: true }));
 app.use(csrfProtection);
 app.use(authMiddleware);
 app.use("/api", apiLimiter, router);
+
+// Serve frontend static files in production
+const publicDir = path.resolve(import.meta.dirname, "public");
+if (fs.existsSync(publicDir)) {
+  app.use(express.static(publicDir, { maxAge: "1y", immutable: true }));
+  app.get("/{*splat}", (_req, res) => {
+    res.sendFile(path.join(publicDir, "index.html"));
+  });
+}
+
 app.use(errorHandler);
 
 export default app;

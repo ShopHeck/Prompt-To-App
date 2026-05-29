@@ -9,7 +9,8 @@
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
     "lint": "eslint 'artifacts/api-server/src/**/*.ts' 'lib/**/*.ts'",
     "lint:fix": "eslint --fix 'artifacts/api-server/src/**/*.ts' 'lib/**/*.ts'",
-    "test": "pnpm -r --if-present run test"
+    "test": "pnpm -r --if-present run test",
+    "migrate": "pnpm --filter @workspace/scripts run migrate"
   },
   "private": true,
   "devDependencies": {

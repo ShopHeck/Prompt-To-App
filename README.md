@@ -63,7 +63,55 @@ PORT=5173 BASE_PATH="/" pnpm --filter @workspace/promptios run dev
 docker compose up
 ```
 
-This starts PostgreSQL and the API server. The frontend can be run separately in dev mode or built and served statically.
+This starts PostgreSQL, builds both the API server and React frontend, and serves everything on `http://localhost:8080`.
+
+## Deployment
+
+### Docker (recommended)
+
+```bash
+# Build production image (includes both API + frontend)
+docker build --target production -t prompt-to-app .
+
+# Run with your env vars
+docker run -p 8080:8080 \
+  -e DATABASE_URL=postgresql://... \
+  -e OPENAI_API_KEY=sk-... \
+  -e SESSION_SECRET=$(openssl rand -hex 32) \
+  prompt-to-app
+
+# Run database migrations
+DATABASE_URL=postgresql://... pnpm run migrate
+```
+
+### Railway
+
+1. Connect your GitHub repo to [Railway](https://railway.app)
+2. Railway auto-detects the `railway.toml` config
+3. Add a PostgreSQL plugin for the database
+4. Set environment variables in the Railway dashboard:
+   - `DATABASE_URL` (auto-set by the PostgreSQL plugin)
+   - `OPENAI_API_KEY`, `SESSION_SECRET`, plus any optional vars from `.env.example`
+5. Deploy — Railway builds the Docker image and starts the service
+
+### Fly.io
+
+```bash
+# Install flyctl: https://fly.io/docs/flyctl/install/
+fly launch --no-deploy        # Creates the app
+fly postgres create           # Creates managed Postgres
+fly postgres attach           # Sets DATABASE_URL automatically
+fly secrets set OPENAI_API_KEY=sk-... SESSION_SECRET=$(openssl rand -hex 32)
+fly deploy                    # Builds and deploys
+```
+
+### GitHub Actions (CI/CD)
+
+The repo includes two workflows:
+- **CI** (`.github/workflows/ci.yml`) — runs on PRs: lint, typecheck, build, integration tests
+- **Deploy** (`.github/workflows/deploy.yml`) — runs on merge to main: builds Docker image, pushes to GitHub Container Registry
+
+To enable auto-deploy to Railway or Fly.io, uncomment the relevant job in `deploy.yml` and add the required secret (`RAILWAY_TOKEN` or `FLY_API_TOKEN`).
 
 ## Project Structure
 
@@ -109,23 +157,42 @@ pnpm --filter @workspace/promptios run test:e2e
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `DATABASE_URL` | Yes | — | PostgreSQL connection string |
-| `OPENAI_API_KEY` | Yes | — | OpenAI API key |
-| `OPENAI_BASE_URL` | No | `https://api.openai.com/v1` | Override for proxies or compatible APIs |
+| `OPENAI_API_KEY` | Yes* | — | OpenAI API key (* at least one AI provider required) |
+| `GEMINI_API_KEY` | No | — | Google Gemini API key |
+| `ANTHROPIC_API_KEY` | No | — | Anthropic Claude API key |
+| `SESSION_SECRET` | Prod | — | Cookie signing secret (`openssl rand -hex 32`) |
 | `PORT` | No | `8080` | API server port |
-| `SESSION_SECRET` | No | — | Session cookie signing secret |
+| `ALLOWED_ORIGINS` | Prod | `*` | CORS origins (comma-separated) |
+| `STRIPE_SECRET_KEY` | No | — | Stripe API key (enables billing) |
+| `SENTRY_DSN` | No | — | Sentry error tracking DSN |
+| `RELEASE_SHA` | No | `dev` | Git SHA for release tracking |
+
+See [`.env.example`](.env.example) for the full list.
 
 ## API Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/projects` | List all projects |
-| `POST` | `/api/projects` | Create a new project |
-| `GET` | `/api/projects/recent` | 5 most recent projects |
-| `GET` | `/api/projects/stats` | Aggregate statistics |
-| `GET` | `/api/projects/:id` | Get project details |
-| `DELETE` | `/api/projects/:id` | Delete a project |
-| `GET` | `/api/projects/:id/files` | Get generated files |
-| `POST` | `/api/projects/:id/generate` | SSE-stream code generation |
-| `POST` | `/api/projects/:id/share` | Create a share link |
-| `GET` | `/api/shared/:token` | View a shared project |
-| `GET` | `/api/projects/:id/download` | Download as zip |
+See the full [OpenAPI spec](lib/api-spec/openapi.yaml) for complete documentation (29 endpoints).
+
+| Group | Method | Path | Description |
+|-------|--------|------|-------------|
+| Health | `GET` | `/api/healthz` | Liveness probe |
+| Health | `GET` | `/api/readyz` | Readiness check (DB, metrics, memory) |
+| Auth | `POST` | `/api/auth/register` | Create account |
+| Auth | `POST` | `/api/auth/login` | Log in |
+| Auth | `POST` | `/api/auth/logout` | Log out |
+| Auth | `GET` | `/api/auth/me` | Current user + quota |
+| Auth | `PUT` | `/api/auth/password` | Change password |
+| Billing | `GET` | `/api/billing/plans` | Plan pricing |
+| Billing | `POST` | `/api/billing/checkout` | Stripe checkout |
+| Billing | `GET` | `/api/billing/subscription` | Current subscription |
+| Billing | `POST` | `/api/billing/portal` | Stripe customer portal |
+| Projects | `GET` | `/api/projects` | List all |
+| Projects | `POST` | `/api/projects` | Create |
+| Projects | `GET` | `/api/projects/:id` | Get details |
+| Projects | `DELETE` | `/api/projects/:id` | Delete |
+| Projects | `POST` | `/api/projects/:id/generate` | SSE-stream iOS generation |
+| Projects | `POST` | `/api/projects/:id/generate-web` | SSE-stream web generation |
+| Projects | `POST` | `/api/projects/:id/refine` | AI refinement (Pro/Studio) |
+| Projects | `GET` | `/api/projects/:id/download` | Download as zip |
+| Misc | `GET` | `/api/providers` | Available AI providers |
+| Misc | `GET` | `/api/templates` | Prompt templates |
