@@ -10,31 +10,23 @@ import {
 } from "../middleware/auth";
 import { authLimiter } from "../middleware/rate-limit";
 import { getQuota } from "../middleware/quota";
+import { validateBody } from "../middleware/validate";
+import { registerSchema, loginSchema, changePasswordSchema } from "../lib/request-schemas";
 
 const router: IRouter = Router();
 
-router.post("/auth/register", authLimiter, async (req, res) => {
+router.post("/auth/register", authLimiter, validateBody(registerSchema), async (req, res) => {
   try {
     const { email, password, displayName } = req.body as {
-      email?: string;
-      password?: string;
+      email: string;
+      password: string;
       displayName?: string;
     };
-
-    if (!email || !password) {
-      res.status(400).json({ error: "Email and password are required" });
-      return;
-    }
-
-    if (password.length < 8) {
-      res.status(400).json({ error: "Password must be at least 8 characters" });
-      return;
-    }
 
     const existing = await db
       .select({ id: usersTable.id })
       .from(usersTable)
-      .where(eq(usersTable.email, email.toLowerCase().trim()));
+      .where(eq(usersTable.email, email));
 
     if (existing.length > 0) {
       res.status(409).json({ error: "An account with this email already exists" });
@@ -44,9 +36,9 @@ router.post("/auth/register", authLimiter, async (req, res) => {
     const [user] = await db
       .insert(usersTable)
       .values({
-        email: email.toLowerCase().trim(),
+        email,
         passwordHash: hashPassword(password),
-        displayName: displayName?.trim() || null,
+        displayName: displayName || null,
       })
       .returning({ id: usersTable.id, email: usersTable.email, displayName: usersTable.displayName, plan: usersTable.plan });
 
@@ -66,22 +58,17 @@ router.post("/auth/register", authLimiter, async (req, res) => {
   }
 });
 
-router.post("/auth/login", authLimiter, async (req, res) => {
+router.post("/auth/login", authLimiter, validateBody(loginSchema), async (req, res) => {
   try {
     const { email, password } = req.body as {
-      email?: string;
-      password?: string;
+      email: string;
+      password: string;
     };
-
-    if (!email || !password) {
-      res.status(400).json({ error: "Email and password are required" });
-      return;
-    }
 
     const [user] = await db
       .select()
       .from(usersTable)
-      .where(eq(usersTable.email, email.toLowerCase().trim()));
+      .where(eq(usersTable.email, email));
 
     if (!user || !verifyPassword(password, user.passwordHash)) {
       res.status(401).json({ error: "Invalid email or password" });
@@ -127,22 +114,12 @@ router.get("/auth/me", async (req, res) => {
   }
 });
 
-router.put("/auth/password", requireAuth, async (req, res) => {
+router.put("/auth/password", requireAuth, validateBody(changePasswordSchema), async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body as {
-      currentPassword?: string;
-      newPassword?: string;
+      currentPassword: string;
+      newPassword: string;
     };
-
-    if (!currentPassword || !newPassword) {
-      res.status(400).json({ error: "Current and new passwords are required" });
-      return;
-    }
-
-    if (newPassword.length < 8) {
-      res.status(400).json({ error: "New password must be at least 8 characters" });
-      return;
-    }
 
     const [user] = await db
       .select({ passwordHash: usersTable.passwordHash })

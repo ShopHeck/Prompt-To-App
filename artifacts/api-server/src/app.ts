@@ -6,9 +6,12 @@ import router from "./routes";
 import { logger } from "./lib/logger";
 import { authMiddleware } from "./middleware/auth";
 import { apiLimiter } from "./middleware/rate-limit";
+import { securityHeaders, corsOrigin, csrfProtection } from "./middleware/security";
+import { errorHandler } from "./middleware/error-handler";
 
 const app: Express = express();
 
+app.use(securityHeaders);
 app.use(
   pinoHttp({
     logger,
@@ -28,13 +31,15 @@ app.use(
     },
   }),
 );
-app.use(cors({ origin: true, credentials: true }));
+app.use(cors({ origin: corsOrigin, credentials: true }));
 app.use(cookieParser());
 // Raw body for Stripe webhook signature verification
 app.use("/api/billing/webhook", express.raw({ type: "application/json" }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(csrfProtection);
 app.use(authMiddleware);
 app.use("/api", apiLimiter, router);
+app.use(errorHandler);
 
 export default app;

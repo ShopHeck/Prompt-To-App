@@ -3,6 +3,8 @@ import { db, projectsTable, projectFilesTable, refinementMessagesTable } from "@
 import { eq, asc } from "drizzle-orm";
 import { requireAuth } from "../middleware/auth";
 import { generationLimiter } from "../middleware/rate-limit";
+import { validateBody } from "../middleware/validate";
+import { refineSchema } from "../lib/request-schemas";
 import { callWithFallback, resolveProvider, DEFAULT_MODELS, FALLBACK_MODELS, type Provider } from "../lib/ai-client";
 
 const router: IRouter = Router();
@@ -70,15 +72,10 @@ router.get("/projects/:id/refinements", async (req, res) => {
   }
 });
 
-router.post("/projects/:id/refine", requireAuth, generationLimiter, async (req, res) => {
+router.post("/projects/:id/refine", requireAuth, generationLimiter, validateBody(refineSchema), async (req, res) => {
   try {
     const projectId = Number(req.params.id);
-    const { instruction } = req.body as { instruction?: string };
-
-    if (!instruction?.trim()) {
-      res.status(400).json({ error: "Instruction is required" });
-      return;
-    }
+    const { instruction } = req.body as { instruction: string };
 
     const userPlan = req.user!.plan;
     if (userPlan === "free") {

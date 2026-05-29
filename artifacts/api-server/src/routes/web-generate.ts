@@ -6,6 +6,7 @@ import { enforceQuota, incrementUsage } from "../middleware/quota";
 import { resolveProvider, type Provider } from "../lib/ai-client";
 import { runWebPlanning, runWebGeneration, type WebPlan } from "../lib/web-generation";
 import { evaluateQuality, type QualityReport } from "../lib/quality-scorer";
+import type { ArchitecturePlan } from "../lib/types";
 
 const router: IRouter = Router();
 
@@ -116,7 +117,7 @@ router.post("/projects/:id/generate-web", generationLimiter, enforceQuota, async
     try {
       qualityReport = await evaluateQuality(
         req.log,
-        plan as unknown as import("../lib/types").ArchitecturePlan,
+        plan as unknown as ArchitecturePlan,
         webProject.files.map(f => ({ filename: f.path.split("/").pop() ?? f.path, filepath: f.path, content: f.content })),
         null,
         provider,
