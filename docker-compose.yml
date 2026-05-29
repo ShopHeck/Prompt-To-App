@@ -19,23 +19,30 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      target: api
+      target: production
     ports:
       - "8080:8080"
     environment:
       PORT: "8080"
       DATABASE_URL: postgresql://postgres:postgres@db:5432/promptios
+      NODE_ENV: production
+      # AI providers — at least one required
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Auth
       SESSION_SECRET: ${SESSION_SECRET:-dev-session-secret}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      # Stripe billing (optional)
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
       STRIPE_PRO_PRICE_ID: ${STRIPE_PRO_PRICE_ID:-}
       STRIPE_STUDIO_PRICE_ID: ${STRIPE_STUDIO_PRICE_ID:-}
-      NODE_ENV: production
+      # Observability (optional)
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      RELEASE_SHA: ${RELEASE_SHA:-dev}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:
       db:
         condition: service_healthy
