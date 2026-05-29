@@ -9,7 +9,7 @@ import { useLocation, Link } from "wouter";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Sparkles, Smartphone, Code2, ArrowLeft, ArrowRight, Layers } from "lucide-react";
+import { Sparkles, Smartphone, Code2, ArrowLeft, ArrowRight, Layers, Globe } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Form,
@@ -29,7 +29,7 @@ import { useToast } from "@/hooks/use-toast";
 const formSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters").max(50, "Name too long"),
   prompt: z.string().min(10, "Add a bit more detail (at least 10 characters)"),
-  framework: z.enum(["swiftui", "uikit"]),
+  framework: z.enum(["swiftui", "uikit", "react"]),
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -40,9 +40,15 @@ export default function NewProject() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
+  const params = new URLSearchParams(window.location.search);
+
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
-    defaultValues: { name: "", prompt: "", framework: "swiftui" },
+    defaultValues: {
+      name: params.get("name") ?? "",
+      prompt: params.get("prompt") ?? "",
+      framework: (params.get("framework") as FormValues["framework"]) ?? "swiftui",
+    },
   });
 
   function onSubmit(data: FormValues) {
@@ -157,14 +163,20 @@ export default function NewProject() {
                       onValueChange={field.onChange}
                       defaultValue={field.value}
                       data-tour="framework"
-                      className="grid grid-cols-1 gap-3 sm:grid-cols-2"
+                      className="grid grid-cols-1 gap-3 sm:grid-cols-3"
                     >
                       {[
                         {
                           value: "swiftui",
                           title: "SwiftUI",
-                          desc: "Declarative, modern. Recommended for new apps.",
+                          desc: "Declarative, modern. Recommended for new iOS apps.",
                           icon: Smartphone,
+                        },
+                        {
+                          value: "react",
+                          title: "React Web",
+                          desc: "React + Tailwind CSS. Full web app with routing and components.",
+                          icon: Globe,
                         },
                         {
                           value: "uikit",

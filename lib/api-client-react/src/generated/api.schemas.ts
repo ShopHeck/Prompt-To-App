@@ -26,6 +26,7 @@ export type ProjectFramework =
 export const ProjectFramework = {
   swiftui: "swiftui",
   uikit: "uikit",
+  react: "react",
 } as const;
 
 export interface Project {
@@ -61,6 +62,7 @@ export type CreateProjectBodyFramework =
 export const CreateProjectBodyFramework = {
   swiftui: "swiftui",
   uikit: "uikit",
+  react: "react",
 } as const;
 
 export interface CreateProjectBody {

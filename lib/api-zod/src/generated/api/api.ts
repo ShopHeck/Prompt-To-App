@@ -31,7 +31,7 @@ export const ListProjectsResponseItem = zod.object({
     "complete",
     "error",
   ]),
-  framework: zod.enum(["swiftui", "uikit"]),
+  framework: zod.enum(["swiftui", "uikit", "react"]),
   fileCount: zod.number(),
   architecturePlan: zod.string().nullable(),
   clarifyingQuestions: zod.string().nullable(),
@@ -51,7 +51,7 @@ export const ListProjectsResponse = zod.array(ListProjectsResponseItem);
 export const CreateProjectBody = zod.object({
   name: zod.string(),
   prompt: zod.string(),
-  framework: zod.enum(["swiftui", "uikit"]),
+  framework: zod.enum(["swiftui", "uikit", "react"]),
 });
 
 /**
@@ -74,7 +74,7 @@ export const GetProjectResponse = zod.object({
     "complete",
     "error",
   ]),
-  framework: zod.enum(["swiftui", "uikit"]),
+  framework: zod.enum(["swiftui", "uikit", "react"]),
   fileCount: zod.number(),
   architecturePlan: zod.string().nullable(),
   clarifyingQuestions: zod.string().nullable(),
@@ -145,7 +145,7 @@ export const GetSharedProjectResponse = zod.object({
       "complete",
       "error",
     ]),
-    framework: zod.enum(["swiftui", "uikit"]),
+    framework: zod.enum(["swiftui", "uikit", "react"]),
     fileCount: zod.number(),
     architecturePlan: zod.string().nullable(),
     clarifyingQuestions: zod.string().nullable(),
@@ -270,7 +270,7 @@ export const GetRecentProjectsResponseItem = zod.object({
     "complete",
     "error",
   ]),
-  framework: zod.enum(["swiftui", "uikit"]),
+  framework: zod.enum(["swiftui", "uikit", "react"]),
   fileCount: zod.number(),
   architecturePlan: zod.string().nullable(),
   clarifyingQuestions: zod.string().nullable(),
