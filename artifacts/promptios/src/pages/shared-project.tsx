@@ -270,7 +270,7 @@ export default function SharedProject() {
             </SheetContent>
           </Sheet>
           <a
-            href="/"
+            href="/dashboard"
             className="hidden md:flex items-center gap-2 transition-opacity hover:opacity-80"
           >
             <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary/10 ring-1 ring-primary/30">
@@ -308,7 +308,7 @@ export default function SharedProject() {
             </Button>
           )}
           <a
-            href="/"
+            href="/dashboard"
             className="hidden sm:inline-flex font-mono text-[11px] uppercase tracking-widest text-muted-foreground transition-colors hover:text-primary"
           >
             Build your own →

@@ -4,6 +4,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/contexts/auth";
 import NotFound from "@/pages/not-found";
+import LandingPage from "@/pages/landing";
 import Dashboard from "@/pages/dashboard";
 import NewProject from "@/pages/new-project";
 import ProjectDetail from "@/pages/project-detail";
@@ -27,7 +28,8 @@ const queryClient = new QueryClient({
 function Router() {
   return (
     <Switch>
-      <Route path="/" component={Dashboard} />
+      <Route path="/" component={LandingPage} />
+      <Route path="/dashboard" component={Dashboard} />
       <Route path="/projects/new" component={NewProject} />
       <Route path="/projects/:id" component={ProjectDetail} />
       <Route path="/share/:token" component={SharedProject} />
