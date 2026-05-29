@@ -1,4 +1,4 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Response } from "express";
 import { db } from "@workspace/db";
 import { projectsTable, projectFilesTable } from "@workspace/db";
 import { eq, desc, count, sum } from "drizzle-orm";
@@ -250,7 +250,7 @@ router.get("/share/:token", async (req, res) => {
 
 // ── Preview routes ──────────────────────────────────────────────────────────
 
-function sendPreviewHtml(res: import("express").Response, html: string) {
+function sendPreviewHtml(res: Response, html: string) {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader(
     "Content-Security-Policy",
@@ -351,7 +351,7 @@ router.get("/projects/:id/download", async (req, res) => {
 // ── Planning phase (uses DB + SSE) ──────────────────────────────────────────
 
 async function runPlanningPhase(
-  res: import("express").Response,
+  res: Response,
   sendEvent: (data: object) => void,
   reqLog: { error: (...args: unknown[]) => void },
   projectId: number,

@@ -2,6 +2,8 @@ import { Router, type IRouter } from "express";
 import { db, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { requireAuth } from "../middleware/auth";
+import { validateBody } from "../middleware/validate";
+import { checkoutSchema } from "../lib/request-schemas";
 import crypto from "node:crypto";
 
 const router: IRouter = Router();
@@ -53,18 +55,14 @@ router.get("/billing/plans", (_req, res) => {
   res.json({ plans: PLAN_PRICES });
 });
 
-router.post("/billing/checkout", requireAuth, async (req, res) => {
+router.post("/billing/checkout", requireAuth, validateBody(checkoutSchema), async (req, res) => {
   try {
     if (!STRIPE_SECRET_KEY) {
       res.status(503).json({ error: "Stripe is not configured" });
       return;
     }
 
-    const { plan } = req.body as { plan?: string };
-    if (!plan || !PRICE_IDS[plan]) {
-      res.status(400).json({ error: "Invalid plan. Choose 'pro' or 'studio'." });
-      return;
-    }
+    const { plan } = req.body as { plan: string };
 
     const [user] = await db
       .select()

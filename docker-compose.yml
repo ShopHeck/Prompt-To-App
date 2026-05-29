@@ -25,9 +25,16 @@ services:
     environment:
       PORT: "8080"
       DATABASE_URL: postgresql://postgres:postgres@db:5432/promptios
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       SESSION_SECRET: ${SESSION_SECRET:-dev-session-secret}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PRO_PRICE_ID: ${STRIPE_PRO_PRICE_ID:-}
+      STRIPE_STUDIO_PRICE_ID: ${STRIPE_STUDIO_PRICE_ID:-}
       NODE_ENV: production
     depends_on:
       db:

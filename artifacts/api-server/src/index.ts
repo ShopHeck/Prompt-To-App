@@ -1,5 +1,8 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { registerProcessHandlers } from "./middleware/error-handler";
+
+registerProcessHandlers();
 
 const port = Number(process.env["PORT"]) || 8080;
 
