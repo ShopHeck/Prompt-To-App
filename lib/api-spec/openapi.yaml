@@ -39,6 +39,25 @@ paths:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
 
+  /readyz:
+    get:
+      operationId: readinessCheck
+      tags: [health]
+      summary: Deep readiness check (DB connectivity, metrics, memory)
+      responses:
+        "200":
+          description: All checks passed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+        "503":
+          description: One or more checks failed (degraded)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+
   # ── Auth ───────────────────────────────────────────────────────────────────
 
   /auth/register:
@@ -859,6 +878,53 @@ components:
           type: ["string", "null"]
       required:
         - answers
+
+    ReadinessResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ready, degraded]
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [ok, error]
+        uptime:
+          type: integer
+        version:
+          type: string
+        environment:
+          type: string
+        sentry:
+          type: boolean
+        metrics:
+          type: object
+          properties:
+            totalRequests:
+              type: integer
+            totalErrors:
+              type: integer
+            statusCodes:
+              type: object
+              additionalProperties:
+                type: integer
+            avgResponseTimeMs:
+              type: number
+            p95ResponseTimeMs:
+              type: number
+          required: [totalRequests, totalErrors, statusCodes, avgResponseTimeMs, p95ResponseTimeMs]
+        memory:
+          type: object
+          properties:
+            rss:
+              type: integer
+            heapUsed:
+              type: integer
+            heapTotal:
+              type: integer
+          required: [rss, heapUsed, heapTotal]
+      required: [status, checks, uptime, version, environment, sentry, metrics, memory]
 
     # ── Auth schemas ──────────────────────────────────────────────────────────
 

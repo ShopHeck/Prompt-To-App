@@ -1,3 +1,8 @@
+import { initSentry } from "./lib/sentry";
+
+// Initialize Sentry before importing anything else
+initSentry();
+
 import app from "./app";
 import { logger } from "./lib/logger";
 import { registerProcessHandlers } from "./middleware/error-handler";

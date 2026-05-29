@@ -1,6 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, usersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { db, usersTable, eq } from "@workspace/db";
 import {
   hashPassword,
   verifyPassword,

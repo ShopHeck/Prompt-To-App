@@ -8,9 +8,11 @@ import { authMiddleware } from "./middleware/auth";
 import { apiLimiter } from "./middleware/rate-limit";
 import { securityHeaders, corsOrigin, csrfProtection } from "./middleware/security";
 import { errorHandler } from "./middleware/error-handler";
+import { metricsMiddleware } from "./middleware/metrics";
 
 const app: Express = express();
 
+app.use(metricsMiddleware);
 app.use(securityHeaders);
 app.use(
   pinoHttp({
