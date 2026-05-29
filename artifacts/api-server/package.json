@@ -12,6 +12,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@sentry/node": "^10.55.0",
     "@types/jszip": "^3.4.1",
     "@workspace/api-zod": "workspace:*",
     "@workspace/db": "workspace:*",

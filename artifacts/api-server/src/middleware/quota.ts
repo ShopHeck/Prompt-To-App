@@ -1,6 +1,5 @@
 import type { Request, Response, NextFunction } from "express";
-import { db, usersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { db, usersTable, eq } from "@workspace/db";
 
 const PLAN_LIMITS: Record<string, number> = {
   free: 5,

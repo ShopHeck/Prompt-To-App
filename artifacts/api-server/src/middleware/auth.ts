@@ -1,6 +1,5 @@
 import type { Request, Response, NextFunction } from "express";
-import { db, usersTable, sessionsTable } from "@workspace/db";
-import { eq, and, gt } from "drizzle-orm";
+import { db, usersTable, sessionsTable, eq, and, gt } from "@workspace/db";
 import crypto from "node:crypto";
 
 const SESSION_COOKIE = "pta_session";

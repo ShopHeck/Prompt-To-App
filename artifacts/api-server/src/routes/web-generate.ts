@@ -1,6 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, projectsTable, projectFilesTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { db, projectsTable, projectFilesTable, eq } from "@workspace/db";
 import { generationLimiter } from "../middleware/rate-limit";
 import { enforceQuota, incrementUsage } from "../middleware/quota";
 import { resolveProvider, type Provider } from "../lib/ai-client";
