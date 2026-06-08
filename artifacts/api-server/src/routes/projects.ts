@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Request, type Response } from "express";
-import { db, projectsTable, projectFilesTable, eq, and, desc, count, sum } from "@workspace/db";
+import { db, projectsTable, projectFilesTable, teamMembersTable, eq, and, desc, count, sum, isNull, or } from "@workspace/db";
 import JSZip from "jszip";
 import { z } from "zod";
 import {
@@ -21,6 +21,7 @@ const CreateProjectBody = CreateProjectBodyBase.extend({
   prompt: z.string().max(PROMPT_MAX_LENGTH, `Prompt must be ${PROMPT_MAX_LENGTH} characters or fewer`),
   name: z.string().max(200, "Name must be 200 characters or fewer"),
   stylePreset: z.string().max(50).optional(),
+  teamId: z.number().int().positive().optional(),
 });
 import {
   resolveProvider,
@@ -34,23 +35,67 @@ import { recordGenerationRun, getProjectHistory, getProjectRuns } from "../lib/g
 import { logger } from "../lib/logger";
 import { generationService } from "../lib/generation-service";
 import { jobQueue } from "../lib/job-queue";
+import { resolveTeamAccess, hasMinRole } from "../middleware/team-auth";
 
 const router: IRouter = Router();
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 /** Checks project ownership. Returns false and sends 404 if denied. */
 function checkOwnership(
-  project: { userId: number | null },
+  project: { userId: number | null; teamId: number | null },
   req: Request,
   res: Response,
   jsonError = true,
 ): boolean {
+  // Team projects use team-based access (checked separately via checkTeamProjectAccess)
+  if (project.teamId !== null) {
+    // For non-team-aware callers, block access
+    if (jsonError) res.status(404).json({ error: "Project not found" });
+    return false;
+  }
   if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
     if (jsonError) res.status(404).json({ error: "Project not found" });
     return false;
   }
   if (project.userId === null && req.user) {
     if (jsonError) res.status(404).json({ error: "Project not found" });
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Check access to a project, handling both personal and team-owned projects.
+ * Returns true if access is allowed, false otherwise (sends appropriate response).
+ * minRole: the minimum role needed for the operation (defaults to "viewer" for reads).
+ */
+async function checkProjectAccess(
+  project: { userId: number | null; teamId: number | null },
+  req: Request,
+  res: Response,
+  minRole: "owner" | "admin" | "member" | "viewer" = "viewer",
+): Promise<boolean> {
+  // Team-owned project
+  if (project.teamId !== null) {
+    const role = await resolveTeamAccess(req, project.teamId);
+    if (!role) {
+      res.status(404).json({ error: "Project not found" });
+      return false;
+    }
+    if (!hasMinRole(role, minRole)) {
+      res.status(403).json({ error: `Requires at least ${minRole} role` });
+      return false;
+    }
+    return true;
+  }
+
+  // Personal project - use existing ownership check
+  if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
+    res.status(404).json({ error: "Project not found" });
+    return false;
+  }
+  if (project.userId === null && req.user) {
+    res.status(404).json({ error: "Project not found" });
     return false;
   }
   return true;
@@ -97,11 +142,28 @@ router.get("/projects", async (req, res) => {
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
     const offset = (page - 1) * limit;
-    const [totalRow] = await db.select({ count: count() }).from(projectsTable).where(eq(projectsTable.userId, req.user.id));
-    const total = totalRow.count;
-    const totalPages = Math.ceil(total / limit);
-    const projects = await db.select().from(projectsTable).where(eq(projectsTable.userId, req.user.id)).orderBy(desc(projectsTable.updatedAt)).limit(limit).offset(offset);
-    res.json({ data: projects, pagination: { page, limit, total, totalPages } });
+    const teamIdParam = req.query.team_id ? parseInt(req.query.team_id as string, 10) : null;
+
+    if (teamIdParam) {
+      // List team projects - verify membership first
+      const role = await resolveTeamAccess(req, teamIdParam);
+      if (!role) {
+        res.status(403).json({ error: "Not a member of this team" });
+        return;
+      }
+      const [totalRow] = await db.select({ count: count() }).from(projectsTable).where(eq(projectsTable.teamId, teamIdParam));
+      const total = totalRow.count;
+      const totalPages = Math.ceil(total / limit);
+      const projects = await db.select().from(projectsTable).where(eq(projectsTable.teamId, teamIdParam)).orderBy(desc(projectsTable.updatedAt)).limit(limit).offset(offset);
+      res.json({ data: projects, pagination: { page, limit, total, totalPages } });
+    } else {
+      // List personal projects only (team_id IS NULL)
+      const [totalRow] = await db.select({ count: count() }).from(projectsTable).where(and(eq(projectsTable.userId, req.user.id), isNull(projectsTable.teamId)));
+      const total = totalRow.count;
+      const totalPages = Math.ceil(total / limit);
+      const projects = await db.select().from(projectsTable).where(and(eq(projectsTable.userId, req.user.id), isNull(projectsTable.teamId))).orderBy(desc(projectsTable.updatedAt)).limit(limit).offset(offset);
+      res.json({ data: projects, pagination: { page, limit, total, totalPages } });
+    }
   } catch (err) {
     req.log.error({ err }, "Failed to list projects");
     res.status(500).json({ error: "Failed to list projects" });
@@ -111,9 +173,21 @@ router.get("/projects", async (req, res) => {
 router.post("/projects", async (req, res) => {
   try {
     const body = CreateProjectBody.parse(req.body);
+
+    // If team_id is specified, verify user is a member
+    if (body.teamId) {
+      const role = await resolveTeamAccess(req, body.teamId);
+      if (!role) {
+        res.status(403).json({ error: "Not a member of this team" });
+        return;
+      }
+    }
+
     const [project] = await db.insert(projectsTable).values({
       name: body.name, prompt: body.prompt, framework: body.framework,
-      stylePreset: body.stylePreset ?? null, status: "pending", fileCount: 0, userId: req.user?.id ?? null,
+      stylePreset: body.stylePreset ?? null, status: "pending", fileCount: 0,
+      userId: req.user?.id ?? null,
+      teamId: body.teamId ?? null,
     }).returning();
     res.status(201).json(project);
   } catch (err) {
@@ -161,7 +235,7 @@ router.get("/projects/:id", async (req, res) => {
       .from(projectsTable)
       .where(eq(projectsTable.id, id));
     if (!project) { res.status(404).json({ error: "Project not found" }); return; }
-    if (!checkOwnership(project, req, res)) return;
+    if (!(await checkProjectAccess(project, req, res, "viewer"))) return;
     res.json(project);
   } catch (err) {
     req.log.error({ err }, "Failed to get project");
@@ -177,7 +251,7 @@ router.delete("/projects/:id", async (req, res) => {
       .from(projectsTable)
       .where(eq(projectsTable.id, id));
     if (!project) { res.status(404).json({ error: "Project not found" }); return; }
-    if (!checkOwnership(project, req, res)) return;
+    if (!(await checkProjectAccess(project, req, res, "admin"))) return;
     await db.delete(projectsTable).where(eq(projectsTable.id, id));
     res.status(204).send();
   } catch (err) {
@@ -194,7 +268,7 @@ router.get("/projects/:id/files", async (req, res) => {
       .from(projectsTable)
       .where(eq(projectsTable.id, id));
     if (!project) { res.status(404).json({ error: "Project not found" }); return; }
-    if (!checkOwnership(project, req, res)) return;
+    if (!(await checkProjectAccess(project, req, res, "viewer"))) return;
     const files = await db
       .select()
       .from(projectFilesTable)
@@ -225,7 +299,7 @@ router.put("/projects/:id/files/:fileId", async (req, res) => {
       .from(projectsTable)
       .where(eq(projectsTable.id, id));
     if (!project) { res.status(404).json({ error: "Project not found" }); return; }
-    if (!checkOwnership(project, req, res)) return;
+    if (!(await checkProjectAccess(project, req, res, "member"))) return;
 
     const body = UpdateFileBody.parse(req.body);
 
@@ -258,7 +332,7 @@ router.post("/projects/:id/share", async (req, res) => {
     const { id } = GetProjectParams.parse(req.params);
     const [project] = await db.select().from(projectsTable).where(eq(projectsTable.id, id));
     if (!project) { res.status(404).json({ error: "Project not found" }); return; }
-    if (!checkOwnership(project, req, res)) return;
+    if (!(await checkProjectAccess(project, req, res, "member"))) return;
 
     let token = project.shareToken;
     if (!token) {
@@ -306,7 +380,18 @@ router.get("/projects/:id/preview", async (req, res) => {
       return;
     }
     const [project] = await db.select().from(projectsTable).where(eq(projectsTable.id, id)).limit(1);
-    if (!project || !checkOwnership(project, req, res, false) || !project.livePreviewHtml) {
+    if (!project || !project.livePreviewHtml) {
+      res.status(404).type("text/html").send(noPreviewHtml);
+      return;
+    }
+    // Check access for team or personal projects
+    if (project.teamId !== null) {
+      const role = await resolveTeamAccess(req, project.teamId);
+      if (!role) {
+        res.status(404).type("text/html").send(noPreviewHtml);
+        return;
+      }
+    } else if (!checkOwnership(project, req, res, false)) {
       res.status(404).type("text/html").send(noPreviewHtml);
       return;
     }
@@ -338,7 +423,7 @@ router.get("/projects/:id/download", async (req, res) => {
     const { id } = GetProjectParams.parse(req.params);
     const [project] = await db.select().from(projectsTable).where(eq(projectsTable.id, id));
     if (!project) { res.status(404).json({ error: "Project not found" }); return; }
-    if (!checkOwnership(project, req, res)) return;
+    if (!(await checkProjectAccess(project, req, res, "viewer"))) return;
 
     const files = await db.select().from(projectFilesTable).where(eq(projectFilesTable.projectId, id)).orderBy(projectFilesTable.filepath);
     if (files.length === 0) { res.status(404).json({ error: "No files to download" }); return; }
@@ -628,7 +713,7 @@ router.get("/projects/:id/history", async (req, res) => {
       .where(eq(projectsTable.id, id));
 
     if (!project) { res.status(404).json({ error: "Project not found" }); return; }
-    if (!checkOwnership(project, req, res)) return;
+    if (!(await checkProjectAccess(project, req, res, "viewer"))) return;
 
     const revisions = await getProjectHistory(id);
     res.json(revisions);
@@ -649,7 +734,7 @@ router.get("/projects/:id/runs", async (req, res) => {
       .where(eq(projectsTable.id, id));
 
     if (!project) { res.status(404).json({ error: "Project not found" }); return; }
-    if (!checkOwnership(project, req, res)) return;
+    if (!(await checkProjectAccess(project, req, res, "viewer"))) return;
 
     const runs = await getProjectRuns(id);
     res.json(runs);

@@ -6,6 +6,7 @@ import billingRouter from "./billing";
 import refinementRouter from "./refinement";
 import webGenerateRouter from "./web-generate";
 import aiFeaturesRouter from "./ai-features";
+import teamsRouter from "./teams";
 
 const router: IRouter = Router();
 
@@ -16,5 +17,6 @@ router.use(projectsRouter);
 router.use(refinementRouter);
 router.use(webGenerateRouter);
 router.use(aiFeaturesRouter);
+router.use(teamsRouter);
 
 export default router;

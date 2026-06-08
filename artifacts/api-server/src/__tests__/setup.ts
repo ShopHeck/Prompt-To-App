@@ -5,7 +5,7 @@ import path from "node:path";
 
 const { Pool } = pg;
 
-const TEST_DB_URL = "postgresql://postgres:postgres@localhost:5432/promptios_test";
+const TEST_DB_URL = process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5432/promptios_test";
 
 // Set env before any imports that read process.env
 process.env.DATABASE_URL = TEST_DB_URL;
@@ -60,6 +60,9 @@ afterEach(async () => {
   await pool.query("DELETE FROM refinement_messages");
   await pool.query("DELETE FROM project_files");
   await pool.query("DELETE FROM projects");
+  await pool.query("DELETE FROM team_invitations");
+  await pool.query("DELETE FROM team_members");
+  await pool.query("DELETE FROM teams");
   await pool.query("DELETE FROM sessions");
   await pool.query("DELETE FROM users");
   // Reset sequences so IDs start fresh
@@ -72,6 +75,9 @@ afterEach(async () => {
   await pool.query("ALTER SEQUENCE project_revisions_id_seq RESTART WITH 1");
   await pool.query("ALTER SEQUENCE rate_limit_hits_id_seq RESTART WITH 1");
   await pool.query("ALTER SEQUENCE audit_events_id_seq RESTART WITH 1");
+  await pool.query("ALTER SEQUENCE teams_id_seq RESTART WITH 1");
+  await pool.query("ALTER SEQUENCE team_members_id_seq RESTART WITH 1");
+  await pool.query("ALTER SEQUENCE team_invitations_id_seq RESTART WITH 1");
 });
 
 afterAll(async () => {

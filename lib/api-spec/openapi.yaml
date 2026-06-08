@@ -24,6 +24,8 @@ tags:
     description: AI provider configuration
   - name: templates
     description: Curated prompt templates
+  - name: teams
+    description: Team/workspace management and collaboration
 paths:
   /healthz:
     get:
@@ -713,6 +715,97 @@ paths:
               schema:
                 $ref: "#/components/schemas/ProjectStats"
 
+  # ── Teams ────────────────────────────────────────────────────────────────────
+
+  /teams:
+    post:
+      operationId: createTeam
+      tags: [teams]
+      summary: Create a new team
+      description: Creates a team and makes the authenticated user the owner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTeamBody"
+      responses:
+        "201":
+          description: Team created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Team"
+        "401":
+          description: Authentication required
+        "409":
+          description: Slug already exists
+    get:
+      operationId: listTeams
+      tags: [teams]
+      summary: List teams for the authenticated user
+      responses:
+        "200":
+          description: List of teams with user role
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TeamWithRole"
+        "401":
+          description: Authentication required
+
+  /teams/{id}:
+    get:
+      operationId: getTeam
+      tags: [teams]
+      summary: Get team details and members
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Team details with members
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamDetails"
+        "401":
+          description: Authentication required
+        "403":
+          description: Not a team member
+
+  /teams/{id}/members:
+    post:
+      operationId: inviteTeamMember
+      tags: [teams]
+      summary: Invite a user to the team by email
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InviteMemberBody"
+      responses:
+        "201":
+          description: Member added or invitation created
+        "401":
+          description: Authentication required
+        "403":
+          description: Requires admin or owner role
+        "409":
+          description: User is already a member
+
 components:
   schemas:
     HealthStatus:
@@ -1244,3 +1337,133 @@ components:
       required:
         - project
         - files
+
+    # ── Team schemas ───────────────────────────────────────────────────────────
+
+    CreateTeamBody:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        slug:
+          type: string
+          minLength: 1
+          maxLength: 100
+          pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+      required:
+        - name
+        - slug
+
+    InviteMemberBody:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [admin, member, viewer]
+      required:
+        - email
+        - role
+
+    Team:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        slug:
+          type: string
+        plan:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - slug
+        - plan
+
+    TeamWithRole:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        slug:
+          type: string
+        plan:
+          type: string
+        role:
+          type: string
+          enum: [owner, admin, member, viewer]
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - slug
+        - plan
+        - role
+
+    TeamMember:
+      type: object
+      properties:
+        id:
+          type: integer
+        userId:
+          type: integer
+        role:
+          type: string
+          enum: [owner, admin, member, viewer]
+        joinedAt:
+          type: string
+          format: date-time
+        email:
+          type: string
+        displayName:
+          type: string
+          nullable: true
+      required:
+        - id
+        - userId
+        - role
+        - email
+
+    TeamDetails:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        slug:
+          type: string
+        plan:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/TeamMember"
+      required:
+        - id
+        - name
+        - slug
+        - plan
+        - members
