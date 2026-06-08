@@ -122,7 +122,7 @@ export async function endSpan(
 export async function getProjectTraceSpans(
   projectId: number,
 ): Promise<Array<typeof auditEventsTable.$inferSelect>> {
-  const { eq, and, desc } = await import("drizzle-orm");
+  const { eq, and, desc, sql } = await import("drizzle-orm");
 
   return db
     .select()
@@ -130,13 +130,8 @@ export async function getProjectTraceSpans(
     .where(
       and(
         eq(auditEventsTable.action, "trace_span"),
+        sql`${auditEventsTable.metadata}->>'projectId' = ${String(projectId)}`,
       ),
     )
-    .orderBy(desc(auditEventsTable.createdAt))
-    .then((rows) =>
-      rows.filter((row) => {
-        const meta = row.metadata as Record<string, unknown> | null;
-        return meta && meta.projectId === projectId;
-      }),
-    );
+    .orderBy(desc(auditEventsTable.createdAt));
 }

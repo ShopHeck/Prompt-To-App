@@ -33,7 +33,7 @@ const BACKOFF_FACTOR = 2;
 export class SSEClient {
   private lastEventId: string | null = null;
   private sessionId: string | null = null;
-  private seenIds: Set<number> = new Set();
+  private lastSeenNumericId = 0;
   private abortController: AbortController | null = null;
   private state: SSEConnectionState = "disconnected";
   private retryCount = 0;
@@ -165,21 +165,15 @@ export class SSEClient {
             try {
               const event = JSON.parse(trimmed.slice(6));
 
-              // Deduplicate by event ID
+              // Deduplicate using monotonic high-water mark
               if (currentId !== null) {
                 const numericId = parseInt(currentId, 10);
                 if (!isNaN(numericId)) {
-                  if (this.seenIds.has(numericId)) {
+                  if (numericId <= this.lastSeenNumericId) {
                     currentId = null;
                     continue;
                   }
-                  this.seenIds.add(numericId);
-                  // Keep the set from growing unbounded
-                  if (this.seenIds.size > 500) {
-                    const arr = Array.from(this.seenIds).sort((a, b) => a - b);
-                    const toRemove = arr.slice(0, arr.length - 300);
-                    for (const id of toRemove) this.seenIds.delete(id);
-                  }
+                  this.lastSeenNumericId = numericId;
                 }
               }
 

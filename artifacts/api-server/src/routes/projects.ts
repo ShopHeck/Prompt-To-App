@@ -102,6 +102,48 @@ async function checkProjectAccess(
   return true;
 }
 
+/**
+ * SSE-compatible version of checkProjectAccess. Sends errors via the SSE event
+ * stream instead of JSON responses (since SSE headers are already flushed).
+ * Returns true if access is allowed, false otherwise (sends error event and ends response).
+ */
+async function checkProjectAccessSSE(
+  project: { userId: number | null; teamId: number | null },
+  req: Request,
+  sendEvent: (data: object) => void,
+  res: Response,
+  minRole: "owner" | "admin" | "member" | "viewer" = "viewer",
+): Promise<boolean> {
+  // Team-owned project
+  if (project.teamId !== null) {
+    const role = await resolveTeamAccess(req, project.teamId);
+    if (!role) {
+      sendEvent({ type: "error", message: "Project not found" });
+      res.end();
+      return false;
+    }
+    if (!hasMinRole(role, minRole)) {
+      sendEvent({ type: "error", message: `Requires at least ${minRole} role` });
+      res.end();
+      return false;
+    }
+    return true;
+  }
+
+  // Personal project - use existing ownership check
+  if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
+    sendEvent({ type: "error", message: "Project not found" });
+    res.end();
+    return false;
+  }
+  if (project.userId === null && req.user) {
+    sendEvent({ type: "error", message: "Project not found" });
+    res.end();
+    return false;
+  }
+  return true;
+}
+
 /** Sets up SSE headers + heartbeat. Returns sendEvent helper and cleanup. */
 function setupSSE(res: Response, opts?: { sessionId?: string; req?: Request }) {
   res.setHeader("Content-Type", "text/event-stream");
@@ -499,12 +541,7 @@ router.post("/projects/:id/generate", generationLimiter, enforceQuota, async (re
       .where(eq(projectsTable.id, id));
 
     if (!project) { sendEvent({ error: "Project not found" }); res.end(); return; }
-    if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
-      sendEvent({ error: "Project not found" }); res.end(); return;
-    }
-    if (project.userId === null && req.user) {
-      sendEvent({ error: "Project not found" }); res.end(); return;
-    }
+    if (!(await checkProjectAccessSSE(project, req, sendEvent, res, "member"))) return;
 
     if (project.status === "generating") {
       const staleCutoff = new Date(Date.now() - 5 * 60 * 1000);
@@ -614,12 +651,7 @@ router.post("/projects/:id/answer-clarifications", async (req, res) => {
       .where(eq(projectsTable.id, id));
 
     if (!project) { sendEvent({ type: "error", message: "Project not found" }); res.end(); return; }
-    if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
-      sendEvent({ type: "error", message: "Project not found" }); res.end(); return;
-    }
-    if (project.userId === null && req.user) {
-      sendEvent({ type: "error", message: "Project not found" }); res.end(); return;
-    }
+    if (!(await checkProjectAccessSSE(project, req, sendEvent, res, "member"))) return;
 
     const frameworkName = project.framework === "swiftui" ? "SwiftUI" : "UIKit";
     const cleanedAnswers = (answers ?? []).map(a => ({
@@ -684,12 +716,7 @@ router.post("/projects/:id/approve-plan", generationLimiter, enforceQuota, async
       .where(eq(projectsTable.id, id));
 
     if (!project) { sendEvent({ type: "error", message: "Project not found" }); res.end(); return; }
-    if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
-      sendEvent({ type: "error", message: "Project not found" }); res.end(); return;
-    }
-    if (project.userId === null && req.user) {
-      sendEvent({ type: "error", message: "Project not found" }); res.end(); return;
-    }
+    if (!(await checkProjectAccessSSE(project, req, sendEvent, res, "member"))) return;
 
     if (project.status === "generating") {
       const staleCutoff = new Date(Date.now() - 5 * 60 * 1000);

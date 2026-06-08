@@ -23,6 +23,7 @@ export function CodeEditor({
 }: CodeEditorProps) {
   const [value, setValue] = React.useState(content);
   const [isDirty, setIsDirty] = React.useState(false);
+  const containerRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
     setValue(content);
@@ -41,28 +42,28 @@ export function CodeEditor({
     }
   };
 
-  // Keyboard shortcut: Ctrl/Cmd+S
-  const handleKeyDown = React.useCallback(
-    (e: KeyboardEvent) => {
+  // Keyboard shortcut: Ctrl/Cmd+S scoped to the editor container
+  React.useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "s") {
         e.preventDefault();
         if (onSave && isDirty && !readOnly) {
           onSave(value);
         }
       }
-    },
-    [onSave, isDirty, readOnly, value],
-  );
+    };
 
-  React.useEffect(() => {
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleKeyDown]);
+    container.addEventListener("keydown", handleKeyDown);
+    return () => container.removeEventListener("keydown", handleKeyDown);
+  }, [onSave, isDirty, readOnly, value]);
 
   const language = getLanguageFromFilename(filename);
 
   return (
-    <div className="flex h-full flex-col">
+    <div ref={containerRef} className="flex h-full flex-col" tabIndex={-1}>
       {/* File header bar */}
       <div className="flex h-10 shrink-0 items-center justify-between border-b border-border/40 bg-background/80 px-4">
         <div className="flex items-center gap-2 font-mono text-sm text-muted-foreground">
