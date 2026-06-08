@@ -31,11 +31,20 @@ export interface GeneratedFileOutput {
 }
 
 /**
+ * Token usage information from the AI provider.
+ */
+export interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+}
+
+/**
  * Result returned from a generator's generate() method.
  */
 export interface GeneratorResult {
   files: GeneratedFileOutput[];
   description: string | null;
+  tokenUsage?: TokenUsage;
 }
 
 /**

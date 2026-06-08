@@ -7,6 +7,8 @@
 //
 // Ported from ApexBuild's _shared/ai.ts and adapted for Node.js.
 
+import { isMockEnabled, mockCallAI, mockStreamAI } from "./ai-mock";
+
 export type Provider = "openai" | "gemini" | "anthropic";
 
 export interface AICallOptions {
@@ -119,6 +121,11 @@ function jitter(ms: number): number {
 
 // ─── Non-streaming call with retry ───────────────────────────────────────
 export async function callAI(opts: AICallOptions): Promise<AIResult> {
+  // Delegate to mock layer when enabled (for tests)
+  if (isMockEnabled()) {
+    return mockCallAI(opts);
+  }
+
   const maxRetries = opts.maxRetries ?? 3;
   const initialDelay = opts.initialRetryDelayMs ?? 2000;
   const timeoutMs = opts.timeoutMs ?? 120_000;
@@ -173,6 +180,12 @@ export async function callWithFallback(
 
 // ─── Streaming call (returns async iterator) ─────────────────────────────
 export async function* streamAI(opts: AICallOptions): AsyncGenerator<AIStreamChunk> {
+  // Delegate to mock layer when enabled (for tests)
+  if (isMockEnabled()) {
+    yield* mockStreamAI(opts);
+    return;
+  }
+
   const maxRetries = opts.maxRetries ?? 2;
   const initialDelay = opts.initialRetryDelayMs ?? 2000;
   const timeoutMs = opts.timeoutMs ?? 300_000;

@@ -84,10 +84,12 @@ Generate Swift sources only. Place every file under ${appTargetName}/. Always in
     let fullResponse = "";
     let chunkCount = 0;
     let finishReason: string | null = null;
+    let totalContentLength = 0;
 
     for await (const chunk of stream) {
       if (chunk.content) {
         fullResponse += chunk.content;
+        totalContentLength += chunk.content.length;
         chunkCount++;
         if (chunkCount % 20 === 0) {
           sendEvent({ type: "progress", message: "Generating code..." });
@@ -114,9 +116,17 @@ Generate Swift sources only. Place every file under ${appTargetName}/. Always in
       throw new Error("Code generation produced no Swift source files. Please try again.");
     }
 
+    // Estimate token usage from content lengths (approx 4 chars per token)
+    const estimatedPromptTokens = Math.ceil((systemPrompt.length + userMessage.length) / 4);
+    const estimatedCompletionTokens = Math.ceil(totalContentLength / 4);
+
     return {
       files: normalizedFiles,
       description: parsed.description ?? null,
+      tokenUsage: {
+        promptTokens: estimatedPromptTokens,
+        completionTokens: estimatedCompletionTokens,
+      },
     };
   }
 

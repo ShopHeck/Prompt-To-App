@@ -22,6 +22,17 @@ export async function cleanupExpiredHits(): Promise<void> {
   await pool.query("DELETE FROM rate_limit_hits WHERE hit_at < NOW() - INTERVAL '1 hour'");
 }
 
+// Module-level singleton cleanup timer (shared across all limiter instances)
+let cleanupTimerStarted = false;
+
+function ensureCleanupTimer(): void {
+  if (cleanupTimerStarted || process.env.NODE_ENV === "test") return;
+  cleanupTimerStarted = true;
+  setInterval(() => {
+    cleanupExpiredHits().catch(() => { /* best-effort cleanup */ });
+  }, 5 * 60 * 1000).unref();
+}
+
 export function rateLimit(config: RateLimitConfig) {
   const { windowMs, maxRequests, message } = config;
 
@@ -30,10 +41,8 @@ export function rateLimit(config: RateLimitConfig) {
     return (_req: Request, _res: Response, next: NextFunction): void => { next(); };
   }
 
-  // Schedule periodic cleanup every 5 minutes
-  setInterval(() => {
-    cleanupExpiredHits().catch(() => { /* best-effort cleanup */ });
-  }, 5 * 60 * 1000).unref();
+  // Start the shared cleanup timer (no-op if already started)
+  ensureCleanupTimer();
 
   return (req: Request, res: Response, next: NextFunction): void => {
     const ip = getClientIp(req);

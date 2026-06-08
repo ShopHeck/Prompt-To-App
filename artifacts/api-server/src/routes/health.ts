@@ -1,4 +1,4 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { HealthCheckResponse } from "@workspace/api-zod";
 import { db, sql } from "@workspace/db";
 import { isEnabled as isSentryEnabled } from "../lib/sentry";
@@ -42,7 +42,30 @@ router.get("/readyz", async (_req, res) => {
   });
 });
 
-router.get("/admin/metrics", requireAuth, (_req, res) => {
+/**
+ * Admin guard: requires either a valid ADMIN_API_KEY header or the user's ID
+ * to be in the ADMIN_USER_IDS comma-separated list.
+ */
+function requireAdmin(req: Request, res: Response, next: NextFunction): void {
+  const adminApiKey = process.env.ADMIN_API_KEY;
+  if (adminApiKey) {
+    const providedKey = req.headers["x-admin-api-key"];
+    if (providedKey === adminApiKey) {
+      next();
+      return;
+    }
+  }
+
+  const adminUserIds = (process.env.ADMIN_USER_IDS ?? "").split(",").map(s => s.trim()).filter(Boolean);
+  if (req.user && adminUserIds.includes(String(req.user.id))) {
+    next();
+    return;
+  }
+
+  res.status(403).json({ error: "Admin access required" });
+}
+
+router.get("/admin/metrics", requireAuth, requireAdmin, (_req, res) => {
   res.json({
     http: metricsSnapshot(),
     generation: generationMetricsSnapshot(),

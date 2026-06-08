@@ -387,7 +387,14 @@ Produce the JSON architecture plan now.`;
     }).catch((err) => { logger.error({ err }, "Failed to record generation history"); });
 
     // Record completed generation metric (token counts from generator if available)
-    recordGenerationMetric("completed", 0, 0, provider, "");
+    const tokenUsage = generatorResult.tokenUsage;
+    recordGenerationMetric(
+      "completed",
+      tokenUsage?.promptTokens ?? 0,
+      tokenUsage?.completionTokens ?? 0,
+      provider,
+      "",
+    );
 
     res.end();
   }
