@@ -73,15 +73,28 @@ router.get("/templates", (_req, res) => {
 router.get("/projects", async (req, res) => {
   try {
     if (!req.user) {
-      res.json([]);
+      res.json({ data: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 0 } });
       return;
     }
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
+    const offset = (page - 1) * limit;
+
+    const [totalRow] = await db
+      .select({ count: count() })
+      .from(projectsTable)
+      .where(eq(projectsTable.userId, req.user.id));
+    const total = totalRow.count;
+    const totalPages = Math.ceil(total / limit);
+
     const projects = await db
       .select()
       .from(projectsTable)
       .where(eq(projectsTable.userId, req.user.id))
-      .orderBy(desc(projectsTable.updatedAt));
-    res.json(projects);
+      .orderBy(desc(projectsTable.updatedAt))
+      .limit(limit)
+      .offset(offset);
+    res.json({ data: projects, pagination: { page, limit, total, totalPages } });
   } catch (err) {
     req.log.error({ err }, "Failed to list projects");
     res.status(500).json({ error: "Failed to list projects" });
@@ -115,12 +128,13 @@ router.get("/projects/recent", async (req, res) => {
       res.json([]);
       return;
     }
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 5));
     const projects = await db
       .select()
       .from(projectsTable)
       .where(eq(projectsTable.userId, req.user.id))
       .orderBy(desc(projectsTable.updatedAt))
-      .limit(5);
+      .limit(limit);
     res.json(projects);
   } catch (err) {
     req.log.error({ err }, "Failed to get recent projects");
@@ -587,6 +601,9 @@ router.post("/projects/:id/generate", generationLimiter, enforceQuota, async (re
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders();
 
+  const heartbeatInterval = setInterval(() => { res.write(`: heartbeat\n\n`); }, 15000);
+  res.on("close", () => { clearInterval(heartbeatInterval); });
+
   const sendEvent = (data: object) => {
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
@@ -708,6 +725,9 @@ router.post("/projects/:id/answer-clarifications", async (req, res) => {
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders();
 
+  const heartbeatInterval = setInterval(() => { res.write(`: heartbeat\n\n`); }, 15000);
+  res.on("close", () => { clearInterval(heartbeatInterval); });
+
   const sendEvent = (data: object) => {
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
@@ -785,6 +805,9 @@ router.post("/projects/:id/approve-plan", generationLimiter, enforceQuota, async
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders();
+
+  const heartbeatInterval = setInterval(() => { res.write(`: heartbeat\n\n`); }, 15000);
+  res.on("close", () => { clearInterval(heartbeatInterval); });
 
   const sendEvent = (data: object) => {
     res.write(`data: ${JSON.stringify(data)}\n\n`);

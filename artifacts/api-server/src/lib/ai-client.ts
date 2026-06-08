@@ -54,19 +54,19 @@ const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 // ─── Default + fallback models per provider ──────────────────────────────
 export const DEFAULT_MODELS: Record<Provider, { planner: string; engineer: string; reviewer: string }> = {
   openai: {
-    planner: "gpt-5.4",
-    engineer: "gpt-5.4",
-    reviewer: "gpt-5.4",
+    planner: process.env.OPENAI_PLANNER_MODEL ?? "gpt-5.4",
+    engineer: process.env.OPENAI_ENGINEER_MODEL ?? "gpt-5.4",
+    reviewer: process.env.OPENAI_REVIEWER_MODEL ?? "gpt-5.4",
   },
   gemini: {
-    planner: "gemini-2.5-pro",
-    engineer: "gemini-2.5-pro",
-    reviewer: "gemini-2.5-flash",
+    planner: process.env.GEMINI_PLANNER_MODEL ?? "gemini-2.5-pro",
+    engineer: process.env.GEMINI_ENGINEER_MODEL ?? "gemini-2.5-pro",
+    reviewer: process.env.GEMINI_REVIEWER_MODEL ?? "gemini-2.5-flash",
   },
   anthropic: {
-    planner: "claude-sonnet-4-6",
-    engineer: "claude-opus-4-7",
-    reviewer: "claude-haiku-4-5-20251001",
+    planner: process.env.ANTHROPIC_PLANNER_MODEL ?? "claude-sonnet-4-6",
+    engineer: process.env.ANTHROPIC_ENGINEER_MODEL ?? "claude-opus-4-7",
+    reviewer: process.env.ANTHROPIC_REVIEWER_MODEL ?? "claude-haiku-4-5-20251001",
   },
 };
 

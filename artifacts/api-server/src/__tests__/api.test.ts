@@ -290,8 +290,10 @@ describe("Project endpoints", () => {
         .send({ name: "App 1", prompt: "test", framework: "swiftui" });
       const res = await request(app).get("/api/projects");
       expect(res.status).toBe(200);
-      expect(Array.isArray(res.body)).toBe(true);
-      expect(res.body.length).toBe(0);
+      expect(res.body.data).toBeDefined();
+      expect(Array.isArray(res.body.data)).toBe(true);
+      expect(res.body.data.length).toBe(0);
+      expect(res.body.pagination).toEqual({ page: 1, limit: 20, total: 0, totalPages: 0 });
     });
 
     it("returns only the authenticated user's projects", async () => {
@@ -304,8 +306,11 @@ describe("Project endpoints", () => {
         .send({ name: "App 2", prompt: "test2", framework: "react" });
       const res = await agent.get("/api/projects");
       expect(res.status).toBe(200);
-      expect(Array.isArray(res.body)).toBe(true);
-      expect(res.body.length).toBe(2);
+      expect(res.body.data).toBeDefined();
+      expect(Array.isArray(res.body.data)).toBe(true);
+      expect(res.body.data.length).toBe(2);
+      expect(res.body.pagination.total).toBe(2);
+      expect(res.body.pagination.totalPages).toBe(1);
     });
   });
 
@@ -466,12 +471,12 @@ describe("Project endpoints", () => {
       await agentB.post("/api/projects").send({ name: "B's App", prompt: "test", framework: "react" });
 
       const listA = await agentA.get("/api/projects");
-      expect(listA.body.length).toBe(1);
-      expect(listA.body[0].name).toBe("A's App");
+      expect(listA.body.data.length).toBe(1);
+      expect(listA.body.data[0].name).toBe("A's App");
 
       const listB = await agentB.get("/api/projects");
-      expect(listB.body.length).toBe(1);
-      expect(listB.body[0].name).toBe("B's App");
+      expect(listB.body.data.length).toBe(1);
+      expect(listB.body.data[0].name).toBe("B's App");
     });
 
     it("user A cannot access user B's project by ID", async () => {
@@ -502,7 +507,8 @@ describe("Project endpoints", () => {
 
       const res = await request(app).get("/api/projects");
       expect(res.status).toBe(200);
-      expect(res.body).toEqual([]);
+      expect(res.body.data).toEqual([]);
+      expect(res.body.pagination.total).toBe(0);
     });
 
     it("unauthenticated user can still create projects", async () => {

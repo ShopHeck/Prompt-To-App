@@ -1,0 +1,37 @@
+{
+  "id": "FEAT-002",
+  "type": "fix",
+  "description": "P1 Production Hardening - Pagination, indexes, Docker optimization, SSE keepalive, and cleanup",
+  "status": "in_progress",
+  "steps": [
+    "1. Add pagination to GET /projects in artifacts/api-server/src/routes/projects.ts: accept ?page=1&limit=20 query params (default page=1, limit=20, max limit=100). Return { data: [...], pagination: { page, limit, total, totalPages } }. Update GET /projects/recent to use limit param.",
+    "2. Create a new migration file lib/db/migrations/0007_add_indexes.sql: CREATE INDEX idx_projects_user_id ON projects(user_id); CREATE INDEX idx_projects_status ON projects(status); CREATE INDEX idx_projects_updated_at ON projects(updated_at DESC); -- sessions.expires_at already has index from migration 0005",
+    "3. Add SSE heartbeat: in artifacts/api-server/src/routes/projects.ts and web-generate.ts, after flushing headers for SSE endpoints, set up a setInterval that writes `: heartbeat\\n\\n` every 15 seconds. Clear the interval when the response ends. This keeps proxy connections alive during long AI calls.",
+    "4. Create a .dockerignore file at the project root with: node_modules, .git, .env, *.md, .github, attached_assets, .agents, dist, coverage",
+    "5. Fix Dockerfile layer caching: copy only pnpm-workspace.yaml, pnpm-lock.yaml, .npmrc, package.json, tsconfig files, and all package.json files from sub-packages FIRST, run pnpm install, THEN copy source code. This ensures code changes don't bust the dependency install cache.",
+    "6. Remove the empty artifacts/api-server/src/middlewares/ directory.",
+    "7. Make AI model names configurable via env vars in artifacts/api-server/src/lib/ai-client.ts: read OPENAI_MODEL, GEMINI_MODEL, ANTHROPIC_MODEL from env with current values as defaults.",
+    "8. Add database connection pool configuration in lib/db/src/index.ts: set max connections (10), idle timeout (30s), connection timeout (5s)."
+  ],
+  "acceptance_criteria": [
+    "GET /api/projects returns paginated response with pagination metadata",
+    "GET /api/projects?page=2&limit=5 returns correct page",
+    "Migration 0007 creates the specified indexes",
+    "SSE endpoints emit heartbeat comments during long waits",
+    ".dockerignore exists and excludes node_modules, .git, .env",
+    "Dockerfile builds successfully with optimized layer caching",
+    "middlewares/ directory is removed",
+    "AI models can be overridden via environment variables",
+    "DB pool has configured limits",
+    "All existing tests pass (update any tests affected by pagination response shape)"
+  ],
+  "verification": [
+    "pnpm run typecheck",
+    "pnpm run lint",
+    "pnpm run build",
+    "pnpm run test",
+    "docker build --target production -t prompt-to-app:test ."
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}

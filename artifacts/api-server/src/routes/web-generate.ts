@@ -17,6 +17,9 @@ router.post("/projects/:id/generate-web", generationLimiter, enforceQuota, async
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders();
 
+  const heartbeatInterval = setInterval(() => { res.write(`: heartbeat\n\n`); }, 15000);
+  res.on("close", () => { clearInterval(heartbeatInterval); });
+
   const sendEvent = (data: object) => {
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
