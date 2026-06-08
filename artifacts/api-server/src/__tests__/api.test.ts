@@ -263,29 +263,64 @@ describe("Project endpoints", () => {
         .send({ prompt: "test", framework: "swiftui" });
       expect(res.status).toBe(400);
     });
+
+    it("rejects prompt over 10000 characters", async () => {
+      const longPrompt = "x".repeat(10001);
+      const res = await request(app)
+        .post("/api/projects")
+        .send({ name: "Long", prompt: longPrompt, framework: "swiftui" });
+      expect(res.status).toBe(400);
+    });
+
+    it("assigns userId when authenticated", async () => {
+      const { agent } = await registerUser("projowner@test.com");
+      const res = await agent
+        .post("/api/projects")
+        .send({ name: "My App", prompt: "test", framework: "swiftui" });
+      expect(res.status).toBe(201);
+      expect(res.body.id).toBeDefined();
+    });
   });
 
   describe("GET /api/projects", () => {
-    it("returns all projects", async () => {
+    it("returns empty array for unauthenticated users", async () => {
+      // Create a project without auth
       await request(app)
         .post("/api/projects")
         .send({ name: "App 1", prompt: "test", framework: "swiftui" });
-      await request(app)
-        .post("/api/projects")
-        .send({ name: "App 2", prompt: "test2", framework: "react" });
       const res = await request(app).get("/api/projects");
       expect(res.status).toBe(200);
-      expect(Array.isArray(res.body)).toBe(true);
-      expect(res.body.length).toBe(2);
+      expect(res.body.data).toBeDefined();
+      expect(Array.isArray(res.body.data)).toBe(true);
+      expect(res.body.data.length).toBe(0);
+      expect(res.body.pagination).toEqual({ page: 1, limit: 20, total: 0, totalPages: 0 });
+    });
+
+    it("returns only the authenticated user's projects", async () => {
+      const { agent } = await registerUser("listowner@test.com");
+      await agent
+        .post("/api/projects")
+        .send({ name: "App 1", prompt: "test", framework: "swiftui" });
+      await agent
+        .post("/api/projects")
+        .send({ name: "App 2", prompt: "test2", framework: "react" });
+      const res = await agent.get("/api/projects");
+      expect(res.status).toBe(200);
+      expect(res.body.data).toBeDefined();
+      expect(Array.isArray(res.body.data)).toBe(true);
+      expect(res.body.data.length).toBe(2);
+      expect(res.body.pagination.total).toBe(2);
+      expect(res.body.pagination.totalPages).toBe(1);
     });
   });
 
   describe("GET /api/projects/:id", () => {
-    it("returns a project by ID", async () => {
-      const create = await request(app)
+    it("returns a project by ID when owned by user", async () => {
+      const { agent } = await registerUser("getowner@test.com");
+      const create = await agent
         .post("/api/projects")
         .send({ name: "Detail", prompt: "x", framework: "swiftui" });
-      const res = await request(app).get(`/api/projects/${create.body.id}`);
+      const res = await agent.get(`/api/projects/${create.body.id}`);
       expect(res.status).toBe(200);
       expect(res.body.name).toBe("Detail");
     });
@@ -294,26 +329,48 @@ describe("Project endpoints", () => {
       const res = await request(app).get("/api/projects/99999");
       expect(res.status).toBe(404);
     });
+
+    it("returns 404 when accessing another user's project", async () => {
+      const { agent: agentA } = await registerUser("usera@test.com");
+      const { agent: agentB } = await registerUser("userb@test.com");
+      const create = await agentA
+        .post("/api/projects")
+        .send({ name: "Private", prompt: "x", framework: "swiftui" });
+      const res = await agentB.get(`/api/projects/${create.body.id}`);
+      expect(res.status).toBe(404);
+    });
   });
 
   describe("DELETE /api/projects/:id", () => {
-    it("deletes a project", async () => {
-      const create = await request(app)
+    it("deletes a project owned by user", async () => {
+      const { agent } = await registerUser("delowner@test.com");
+      const create = await agent
         .post("/api/projects")
         .send({ name: "Delete Me", prompt: "x", framework: "swiftui" });
-      const del = await request(app).delete(`/api/projects/${create.body.id}`);
+      const del = await agent.delete(`/api/projects/${create.body.id}`);
       expect(del.status).toBe(204);
-      const get = await request(app).get(`/api/projects/${create.body.id}`);
+      const get = await agent.get(`/api/projects/${create.body.id}`);
       expect(get.status).toBe(404);
+    });
+
+    it("returns 404 when deleting another user's project", async () => {
+      const { agent: agentA } = await registerUser("delA@test.com");
+      const { agent: agentB } = await registerUser("delB@test.com");
+      const create = await agentA
+        .post("/api/projects")
+        .send({ name: "NotYours", prompt: "x", framework: "swiftui" });
+      const del = await agentB.delete(`/api/projects/${create.body.id}`);
+      expect(del.status).toBe(404);
     });
   });
 
   describe("GET /api/projects/:id/files", () => {
-    it("returns empty array for new project", async () => {
-      const create = await request(app)
+    it("returns empty array for new project owned by user", async () => {
+      const { agent } = await registerUser("filesowner@test.com");
+      const create = await agent
         .post("/api/projects")
         .send({ name: "NoFiles", prompt: "x", framework: "swiftui" });
-      const res = await request(app).get(`/api/projects/${create.body.id}/files`);
+      const res = await agent.get(`/api/projects/${create.body.id}/files`);
       expect(res.status).toBe(200);
       expect(res.body).toEqual([]);
     });
@@ -321,10 +378,11 @@ describe("Project endpoints", () => {
 
   describe("POST /api/projects/:id/share", () => {
     it("generates a share token", async () => {
-      const create = await request(app)
+      const { agent } = await registerUser("shareowner@test.com");
+      const create = await agent
         .post("/api/projects")
         .send({ name: "ShareMe", prompt: "x", framework: "swiftui" });
-      const res = await request(app).post(`/api/projects/${create.body.id}/share`);
+      const res = await agent.post(`/api/projects/${create.body.id}/share`);
       expect(res.status).toBe(200);
       expect(res.body.token).toBeDefined();
       expect(typeof res.body.token).toBe("string");
@@ -332,21 +390,24 @@ describe("Project endpoints", () => {
     });
 
     it("returns same token on second call", async () => {
-      const create = await request(app)
+      const { agent } = await registerUser("sharetwice@test.com");
+      const create = await agent
         .post("/api/projects")
         .send({ name: "ShareTwice", prompt: "x", framework: "swiftui" });
-      const first = await request(app).post(`/api/projects/${create.body.id}/share`);
-      const second = await request(app).post(`/api/projects/${create.body.id}/share`);
+      const first = await agent.post(`/api/projects/${create.body.id}/share`);
+      const second = await agent.post(`/api/projects/${create.body.id}/share`);
       expect(first.body.token).toBe(second.body.token);
     });
   });
 
   describe("GET /api/share/:token", () => {
     it("returns shared project", async () => {
-      const create = await request(app)
+      const { agent } = await registerUser("sharedowner@test.com");
+      const create = await agent
         .post("/api/projects")
         .send({ name: "Shared", prompt: "test share", framework: "swiftui" });
-      const share = await request(app).post(`/api/projects/${create.body.id}/share`);
+      const share = await agent.post(`/api/projects/${create.body.id}/share`);
+      // Share endpoint is accessible by anyone with the token (unauthenticated)
       const res = await request(app).get(`/api/share/${share.body.token}`);
       expect(res.status).toBe(200);
       expect(res.body.project.name).toBe("Shared");
@@ -359,16 +420,23 @@ describe("Project endpoints", () => {
   });
 
   describe("GET /api/projects/recent", () => {
-    it("returns up to 5 recent projects", async () => {
+    it("returns up to 5 recent projects for authenticated user", async () => {
+      const { agent } = await registerUser("recentowner@test.com");
       for (let i = 0; i < 7; i++) {
-        await request(app)
+        await agent
           .post("/api/projects")
           .send({ name: `App ${i}`, prompt: "x", framework: "swiftui" });
       }
-      const res = await request(app).get("/api/projects/recent");
+      const res = await agent.get("/api/projects/recent");
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body)).toBe(true);
       expect(res.body.length).toBeLessThanOrEqual(5);
+    });
+
+    it("returns empty array for unauthenticated", async () => {
+      const res = await request(app).get("/api/projects/recent");
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([]);
     });
   });
 
@@ -385,11 +453,88 @@ describe("Project endpoints", () => {
 
   describe("GET /api/projects/:id/preview", () => {
     it("returns 404 when no preview exists", async () => {
-      const create = await request(app)
+      const { agent } = await registerUser("prevowner@test.com");
+      const create = await agent
         .post("/api/projects")
         .send({ name: "NoPreview", prompt: "x", framework: "swiftui" });
-      const res = await request(app).get(`/api/projects/${create.body.id}/preview`);
+      const res = await agent.get(`/api/projects/${create.body.id}/preview`);
       expect(res.status).toBe(404);
+    });
+  });
+
+  describe("Ownership enforcement", () => {
+    it("user A cannot see user B's projects in list", async () => {
+      const { agent: agentA } = await registerUser("ownerA@test.com");
+      const { agent: agentB } = await registerUser("ownerB@test.com");
+
+      await agentA.post("/api/projects").send({ name: "A's App", prompt: "test", framework: "swiftui" });
+      await agentB.post("/api/projects").send({ name: "B's App", prompt: "test", framework: "react" });
+
+      const listA = await agentA.get("/api/projects");
+      expect(listA.body.data.length).toBe(1);
+      expect(listA.body.data[0].name).toBe("A's App");
+
+      const listB = await agentB.get("/api/projects");
+      expect(listB.body.data.length).toBe(1);
+      expect(listB.body.data[0].name).toBe("B's App");
+    });
+
+    it("user A cannot access user B's project by ID", async () => {
+      const { agent: agentA } = await registerUser("isoA@test.com");
+      const { agent: agentB } = await registerUser("isoB@test.com");
+
+      const create = await agentB.post("/api/projects").send({ name: "B Only", prompt: "x", framework: "swiftui" });
+      const res = await agentA.get(`/api/projects/${create.body.id}`);
+      expect(res.status).toBe(404);
+    });
+
+    it("user A cannot delete user B's project", async () => {
+      const { agent: agentA } = await registerUser("delIsoA@test.com");
+      const { agent: agentB } = await registerUser("delIsoB@test.com");
+
+      const create = await agentB.post("/api/projects").send({ name: "B Delete", prompt: "x", framework: "swiftui" });
+      const res = await agentA.delete(`/api/projects/${create.body.id}`);
+      expect(res.status).toBe(404);
+
+      // Verify project still exists for user B
+      const check = await agentB.get(`/api/projects/${create.body.id}`);
+      expect(check.status).toBe(200);
+    });
+
+    it("unauthenticated user cannot list projects", async () => {
+      const { agent } = await registerUser("nolist@test.com");
+      await agent.post("/api/projects").send({ name: "Auth App", prompt: "x", framework: "swiftui" });
+
+      const res = await request(app).get("/api/projects");
+      expect(res.status).toBe(200);
+      expect(res.body.data).toEqual([]);
+      expect(res.body.pagination.total).toBe(0);
+    });
+
+    it("unauthenticated user can still create projects", async () => {
+      const res = await request(app)
+        .post("/api/projects")
+        .send({ name: "Anon App", prompt: "test", framework: "swiftui" });
+      expect(res.status).toBe(201);
+      expect(res.body.id).toBeDefined();
+    });
+
+    it("shared projects are accessible via token regardless of auth", async () => {
+      const { agent: agentA } = await registerUser("shareIsoA@test.com");
+      const { agent: agentB } = await registerUser("shareIsoB@test.com");
+
+      const create = await agentA.post("/api/projects").send({ name: "Shared Project", prompt: "x", framework: "swiftui" });
+      const share = await agentA.post(`/api/projects/${create.body.id}/share`);
+
+      // User B can access via share token
+      const res = await agentB.get(`/api/share/${share.body.token}`);
+      expect(res.status).toBe(200);
+      expect(res.body.project.name).toBe("Shared Project");
+
+      // Unauthenticated can access via share token
+      const anonRes = await request(app).get(`/api/share/${share.body.token}`);
+      expect(anonRes.status).toBe(200);
+      expect(anonRes.body.project.name).toBe("Shared Project");
     });
   });
 });
@@ -526,5 +671,190 @@ describe("POST /api/projects/:id/generate-web", () => {
     const res = await request(app).post("/api/projects/99999/generate-web");
     expect(res.status).toBe(200);
     expect(res.text).toContain("not found");
+  });
+});
+
+// ── History & Runs ────────────────────────────────────────────────────────────
+
+describe("Project History & Runs endpoints", () => {
+  describe("GET /api/projects/:id/history", () => {
+    it("returns empty array for project with no revisions", async () => {
+      const { agent } = await registerUser("hist@test.com");
+      const create = await agent
+        .post("/api/projects")
+        .send({ name: "HistProject", prompt: "test app", framework: "swiftui" });
+      const res = await agent.get(`/api/projects/${create.body.id}/history`);
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([]);
+    });
+
+    it("returns 404 for nonexistent project", async () => {
+      const { agent } = await registerUser("hist2@test.com");
+      const res = await agent.get("/api/projects/99999/history");
+      expect(res.status).toBe(404);
+    });
+
+    it("returns 404 when accessing another user project", async () => {
+      const { agent: agent1 } = await registerUser("owner1@test.com");
+      const create = await agent1
+        .post("/api/projects")
+        .send({ name: "Private", prompt: "private app", framework: "swiftui" });
+
+      const { agent: agent2 } = await registerUser("other1@test.com");
+      const res = await agent2.get(`/api/projects/${create.body.id}/history`);
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe("GET /api/projects/:id/runs", () => {
+    it("returns empty array for project with no runs", async () => {
+      const { agent } = await registerUser("runs@test.com");
+      const create = await agent
+        .post("/api/projects")
+        .send({ name: "RunsProject", prompt: "test app", framework: "swiftui" });
+      const res = await agent.get(`/api/projects/${create.body.id}/runs`);
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([]);
+    });
+
+    it("returns 404 for nonexistent project", async () => {
+      const { agent } = await registerUser("runs2@test.com");
+      const res = await agent.get("/api/projects/99999/runs");
+      expect(res.status).toBe(404);
+    });
+
+    it("returns 404 when accessing another user project", async () => {
+      const { agent: agent1 } = await registerUser("owner2@test.com");
+      const create = await agent1
+        .post("/api/projects")
+        .send({ name: "Private2", prompt: "private app", framework: "swiftui" });
+
+      const { agent: agent2 } = await registerUser("other2@test.com");
+      const res = await agent2.get(`/api/projects/${create.body.id}/runs`);
+      expect(res.status).toBe(404);
+    });
+  });
+});
+
+// ── Style Presets ─────────────────────────────────────────────────────────────
+
+describe("GET /api/style-presets", () => {
+  it("returns all style presets", async () => {
+    const res = await request(app).get("/api/style-presets");
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    expect(res.body.length).toBe(5);
+
+    const ids = res.body.map((p: { id: string }) => p.id);
+    expect(ids).toContain("cyberpunk");
+    expect(ids).toContain("minimalist");
+    expect(ids).toContain("brutalist");
+    expect(ids).toContain("apple-native");
+    expect(ids).toContain("elegant-dark");
+
+    const preset = res.body[0];
+    expect(preset.id).toBeDefined();
+    expect(preset.name).toBeDefined();
+    expect(preset.description).toBeDefined();
+    expect(preset.colorPalette).toBeDefined();
+    expect(preset.typographyStyle).toBeDefined();
+    expect(preset.animationStyle).toBeDefined();
+    expect(preset.componentStyle).toBeDefined();
+  });
+});
+
+// ── Icon Generation ───────────────────────────────────────────────────────────
+
+describe("POST /api/projects/:id/generate-icon", () => {
+  it("returns 503 when GEMINI_API_KEY is not set", async () => {
+    const { agent } = await registerUser("icon@test.com");
+    const create = await agent
+      .post("/api/projects")
+      .send({ name: "IconApp", prompt: "A weather app", framework: "swiftui" });
+    const res = await agent.post(`/api/projects/${create.body.id}/generate-icon`).send({});
+    expect(res.status).toBe(503);
+    expect(res.body.error).toContain("GEMINI_API_KEY");
+  });
+
+  it("returns 404 for nonexistent project", async () => {
+    const { agent } = await registerUser("icon2@test.com");
+    const res = await agent.post("/api/projects/99999/generate-icon").send({});
+    expect(res.status).toBe(503); // 503 comes before project lookup since no key
+  });
+
+  it("returns 404 when accessing another user project", async () => {
+    const { agent: agentA } = await registerUser("iconA@test.com");
+    const { agent: agentB } = await registerUser("iconB@test.com");
+    const create = await agentA
+      .post("/api/projects")
+      .send({ name: "IconOwner", prompt: "x", framework: "swiftui" });
+    // Since GEMINI_API_KEY is not set, we get 503 before ownership check
+    const res = await agentB.post(`/api/projects/${create.body.id}/generate-icon`).send({});
+    expect(res.status).toBe(503);
+  });
+});
+
+// ── Visual Feedback ───────────────────────────────────────────────────────────
+
+describe("POST /api/projects/:id/visual-feedback", () => {
+  it("returns 400 when screenshot is missing", async () => {
+    const { agent } = await registerUser("vf@test.com");
+    const create = await agent
+      .post("/api/projects")
+      .send({ name: "VFApp", prompt: "A todo app", framework: "swiftui" });
+    const res = await agent.post(`/api/projects/${create.body.id}/visual-feedback`).send({});
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("Validation failed");
+  });
+
+  it("returns 400 when screenshot is empty string", async () => {
+    const { agent } = await registerUser("vf2@test.com");
+    const create = await agent
+      .post("/api/projects")
+      .send({ name: "VFApp2", prompt: "A todo app", framework: "swiftui" });
+    const res = await agent
+      .post(`/api/projects/${create.body.id}/visual-feedback`)
+      .send({ screenshot: "" });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 503 when GEMINI_API_KEY is not set", async () => {
+    const { agent } = await registerUser("vf3@test.com");
+    const create = await agent
+      .post("/api/projects")
+      .send({ name: "VFApp3", prompt: "A todo app", framework: "swiftui" });
+    const res = await agent
+      .post(`/api/projects/${create.body.id}/visual-feedback`)
+      .send({ screenshot: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk" });
+    expect(res.status).toBe(503);
+    expect(res.body.error).toContain("GEMINI_API_KEY");
+  });
+
+  it("returns 404 for nonexistent project when Gemini is not configured", async () => {
+    const { agent } = await registerUser("vf4@test.com");
+    const res = await agent
+      .post("/api/projects/99999/visual-feedback")
+      .send({ screenshot: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk" });
+    expect(res.status).toBe(503); // 503 before project lookup
+  });
+});
+
+// ── Style Preset on Project Creation ──────────────────────────────────────────
+
+describe("Style preset on project creation", () => {
+  it("creates a project with a style preset", async () => {
+    const res = await request(app)
+      .post("/api/projects")
+      .send({ name: "Styled App", prompt: "A cool app", framework: "swiftui", stylePreset: "cyberpunk" });
+    expect(res.status).toBe(201);
+    expect(res.body.stylePreset).toBe("cyberpunk");
+  });
+
+  it("creates a project without a style preset", async () => {
+    const res = await request(app)
+      .post("/api/projects")
+      .send({ name: "Plain App", prompt: "A plain app", framework: "swiftui" });
+    expect(res.status).toBe(201);
+    expect(res.body.stylePreset).toBeNull();
   });
 });

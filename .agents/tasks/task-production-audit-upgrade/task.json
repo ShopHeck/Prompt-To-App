@@ -1,0 +1,14 @@
+{
+  "task_id": "task-production-audit-upgrade",
+  "task_description": "End-to-end audit of Prompt-To-App covering security, architecture, code quality, testing, deployment, performance, and observability. Produces a comprehensive upgrade plan with prioritized implementation features to bring the project to production-ready status. Includes porting valuable features from App-generator-codex (revision tracking, generator registry) and RORK-Max-gemma3 (visual feedback, style presets, icon generation).",
+  "status": "completed",
+  "feature_order": ["FEAT-001", "FEAT-002", "FEAT-003", "FEAT-004"],
+  "blocked_reason": null,
+  "verification": {
+    "build": "pass",
+    "tests": "pass",
+    "test_quality": "pass",
+    "docker_build": "skipped",
+    "summary": "Typecheck passes, lint passes (0 errors, 19 pre-existing warnings), build passes. Tests pass as confirmed by coder agents (76 tests covering auth, billing, projects, ownership, refinement, generation, style presets, visual feedback, icon generation). Docker build skipped due to timeout in sandbox. All 4 features implemented across 4 commits."
+  }
+}

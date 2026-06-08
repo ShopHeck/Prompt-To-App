@@ -1,14 +1,28 @@
 FROM node:24-slim AS base
-RUN corepack enable pnpm
+RUN corepack enable pnpm && corepack install -g pnpm@10.28.1
 WORKDIR /app
 
 # Copy workspace config and lockfile first for better layer caching
 COPY pnpm-workspace.yaml pnpm-lock.yaml .npmrc package.json tsconfig.base.json tsconfig.json ./
+
+# Copy only package.json files from sub-packages (dependency manifest layer)
+COPY lib/db/package.json lib/db/
+COPY lib/api-spec/package.json lib/api-spec/
+COPY lib/api-zod/package.json lib/api-zod/
+COPY lib/api-client-react/package.json lib/api-client-react/
+COPY lib/integrations-openai-ai-server/package.json lib/integrations-openai-ai-server/
+COPY lib/integrations-openai-ai-react/package.json lib/integrations-openai-ai-react/
+COPY artifacts/api-server/package.json artifacts/api-server/
+COPY artifacts/promptios/package.json artifacts/promptios/
+COPY artifacts/mockup-sandbox/package.json artifacts/mockup-sandbox/
+COPY scripts/package.json scripts/
+
+RUN pnpm install --frozen-lockfile
+
+# Now copy source code (changes here don't bust the install cache)
 COPY lib/ lib/
 COPY artifacts/ artifacts/
 COPY scripts/ scripts/
-
-RUN pnpm install --frozen-lockfile
 
 # ── API server build ─────────────────────────────────────────────────────────
 FROM base AS api-build
@@ -22,7 +36,7 @@ RUN pnpm --filter @workspace/promptios run build
 
 # ── Production image ─────────────────────────────────────────────────────────
 FROM node:24-slim AS production
-RUN corepack enable pnpm
+RUN corepack enable pnpm && corepack install -g pnpm@10.28.1
 
 # Security: run as non-root user
 RUN groupadd --gid 1001 appuser && \

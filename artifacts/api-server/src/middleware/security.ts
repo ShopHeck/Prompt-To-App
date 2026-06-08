@@ -9,6 +9,11 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? "")
 
 const isDev = process.env.NODE_ENV !== "production";
 
+if (!isDev && ALLOWED_ORIGINS.length === 0) {
+  // eslint-disable-next-line no-console
+  console.warn("[security] WARNING: ALLOWED_ORIGINS is empty in production. All cross-origin requests will be rejected.");
+}
+
 /**
  * Helmet: sets secure HTTP headers (CSP, HSTS, X-Frame-Options, etc.).
  * In development, CSP is relaxed for inline scripts/styles used by Vite.
@@ -50,7 +55,7 @@ export function corsOrigin(
   }
 
   if (ALLOWED_ORIGINS.length === 0) {
-    callback(null, true);
+    callback(new Error("Not allowed by CORS"));
     return;
   }
 

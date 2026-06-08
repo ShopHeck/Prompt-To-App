@@ -1,0 +1,33 @@
+{
+  "id": "FEAT-001",
+  "type": "fix",
+  "description": "P0 Security Fixes - Critical issues that must be resolved before any production traffic",
+  "status": "completed",
+  "steps": [
+    "1. Add project ownership enforcement in artifacts/api-server/src/routes/projects.ts: filter GET /projects by req.user?.id (return empty for unauthenticated), check ownership on GET/:id, DELETE/:id, POST/:id/generate, POST/:id/share, GET/:id/files, GET/:id/download, GET/:id/preview. Allow unauthenticated access to share endpoints (by token) and POST /projects (assign userId on create).",
+    "2. Fix CORS in artifacts/api-server/src/middleware/security.ts: when NODE_ENV=production AND ALLOWED_ORIGINS is empty, reject all cross-origin requests (not silently allow all). Log a startup warning.",
+    "3. Fix quota increment bug in artifacts/api-server/src/middleware/quota.ts: remove the dead `db.update(usersTable).set({ monthlyGenerations: usersTable.monthlyGenerations })` call, keep only the atomic SQL increment.",
+    "4. Add Stripe webhook timestamp tolerance in artifacts/api-server/src/routes/billing.ts verifyStripeSignature(): reject if abs(Date.now()/1000 - Number(timestamp)) > 300.",
+    "5. Add prompt length validation: update lib/api-zod or request-schemas to cap prompt/instruction fields at 10000 characters with a clear error message.",
+    "6. Add graceful shutdown in artifacts/api-server/src/index.ts: listen for SIGTERM, stop accepting new connections, drain existing ones (30s timeout), close DB pool, then exit.",
+    "7. Update the integration tests in artifacts/api-server/src/__tests__/api.test.ts to test ownership enforcement (user A cannot see user B's projects, unauthenticated cannot list projects)."
+  ],
+  "acceptance_criteria": [
+    "GET /api/projects returns only the authenticated user's projects (empty array for unauthenticated)",
+    "DELETE /api/projects/:id returns 404 when called by a user who does not own the project",
+    "CORS rejects unknown origins in production mode when ALLOWED_ORIGINS is empty",
+    "Quota incrementUsage() uses only the atomic SQL increment (no dead Drizzle update)",
+    "Stripe webhook rejects replayed events older than 5 minutes",
+    "Prompt fields reject inputs over 10000 characters with a 400 error",
+    "Server shuts down gracefully on SIGTERM (logs, drains, exits 0)",
+    "All existing tests still pass",
+    "New ownership tests pass"
+  ],
+  "verification": [
+    "pnpm run typecheck",
+    "pnpm run lint",
+    "pnpm run test"
+  ],
+  "blocked_reason": null,
+  "findings": "All 60 tests pass. Build succeeds. Postgres needed to be installed and configured manually (dnf install postgresql16-server, initdb with trust auth, setsid to keep process alive in sandbox). The pnpm-lock.yaml was updated by pnpm install. Ownership model: userId-bearing projects accessible only by owner; null-userId projects accessible by unauthenticated users only (authenticated users must use share token for those). The CORS warning uses console.warn since the project lints against console.log but allows warn/error."
+}

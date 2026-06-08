@@ -26,5 +26,23 @@ export const refineSchema = z.object({
   instruction: z
     .string()
     .trim()
-    .min(1, "Instruction is required"),
+    .min(1, "Instruction is required")
+    .max(10000, "Instruction must be 10000 characters or fewer"),
+});
+
+export const generateIconSchema = z.object({
+  name: z.string().trim().min(1).max(200).optional(),
+  description: z.string().trim().max(1000).optional(),
+});
+
+export const visualFeedbackSchema = z.object({
+  screenshot: z
+    .string()
+    .min(1, "Screenshot (base64) is required")
+    .max(7_000_000, "Screenshot must be 7000000 characters or fewer"),
+  instruction: z
+    .string()
+    .trim()
+    .max(5000, "Instruction must be 5000 characters or fewer")
+    .optional(),
 });

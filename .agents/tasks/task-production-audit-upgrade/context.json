@@ -1,0 +1,33 @@
+{
+  "project_type": "pnpm monorepo - Express 5 API + React 19 Vite frontend for AI-powered iOS/web app generation",
+  "language": "TypeScript 5.9",
+  "build_system": "pnpm workspaces with esbuild for API server, Vite for frontend, multi-stage Dockerfile",
+  "test_framework": "vitest for API unit/integration tests (with Postgres), Playwright for E2E",
+  "build_command": "pnpm run build (runs typecheck then builds all packages)",
+  "test_command": "pnpm run test (vitest run in api-server with Postgres required)",
+  "verification_instructions": "1. pnpm install, 2. pnpm run typecheck, 3. pnpm run lint, 4. pnpm run build, 5. pnpm run test (requires Postgres at DATABASE_URL)",
+  "snapshot_or_generated_files": "lib/api-client-react/ and lib/api-zod/ are generated from lib/api-spec/openapi.yaml via pnpm --filter @workspace/api-spec run codegen",
+  "setup_instructions": "pnpm install, cp .env.example .env, set DATABASE_URL and at least one AI provider key, pnpm --filter @workspace/db run push",
+  "environment_constraints": "OPEN_INTERNET - full access. Postgres required for tests.",
+  "contribution_requirements": "ESLint + Prettier enforced, TypeScript strict, consistent-type-imports required, no console.log (warn only for warn/error)",
+  "key_patterns": "Zod validation middleware on routes, session-based auth with cookie, drizzle ORM for DB, SSE streaming for generation, multi-provider AI client with retry/fallback, OpenAPI spec as source of truth for API contracts",
+  "relevant_files": [
+    "artifacts/api-server/src/app.ts",
+    "artifacts/api-server/src/middleware/auth.ts",
+    "artifacts/api-server/src/middleware/security.ts",
+    "artifacts/api-server/src/middleware/rate-limit.ts",
+    "artifacts/api-server/src/middleware/quota.ts",
+    "artifacts/api-server/src/routes/projects.ts",
+    "artifacts/api-server/src/routes/auth.ts",
+    "artifacts/api-server/src/routes/billing.ts",
+    "artifacts/api-server/src/lib/ai-client.ts",
+    "artifacts/api-server/src/lib/ai-pipeline.ts",
+    "artifacts/api-server/src/__tests__/api.test.ts",
+    "lib/db/src/schema/projects.ts",
+    "lib/db/src/schema/users.ts",
+    "Dockerfile",
+    "docker-compose.yml",
+    "fly.toml"
+  ],
+  "directory_structure": "artifacts/ (api-server, promptios frontend, mockup-sandbox), lib/ (api-client-react, api-spec, api-zod, db, integrations-openai-ai-server, integrations-openai-ai-react), scripts/, .github/workflows/"
+}

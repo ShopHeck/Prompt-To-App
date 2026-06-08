@@ -1,8 +1,9 @@
 import { Router, type IRouter, type Response } from "express";
 import { db, projectsTable, projectFilesTable, eq, desc, count, sum } from "@workspace/db";
 import JSZip from "jszip";
+import { z } from "zod";
 import {
-  CreateProjectBody,
+  CreateProjectBody as CreateProjectBodyBase,
   GetProjectParams,
   DeleteProjectParams,
   GetProjectFilesParams,
@@ -13,6 +14,14 @@ import {
   AnswerClarificationsParams,
   AnswerClarificationsBody,
 } from "@workspace/api-zod";
+
+const PROMPT_MAX_LENGTH = 10000;
+
+const CreateProjectBody = CreateProjectBodyBase.extend({
+  prompt: z.string().max(PROMPT_MAX_LENGTH, `Prompt must be ${PROMPT_MAX_LENGTH} characters or fewer`),
+  name: z.string().max(200, "Name must be 200 characters or fewer"),
+  stylePreset: z.string().max(50).optional(),
+});
 import { IOS_QUALITY_STANDARDS } from "../lib/ios-quality-standards";
 import { normalizeIosProject } from "../lib/xcode-scaffold";
 import {
@@ -39,6 +48,9 @@ import { PATTERN_MENU, getSelectedPatterns } from "../lib/component-library";
 import { evaluateQuality, type QualityReport } from "../lib/quality-scorer";
 import { generationLimiter } from "../middleware/rate-limit";
 import { enforceQuota, incrementUsage } from "../middleware/quota";
+import { recordGenerationRun, recordProjectRevision, getProjectHistory, getProjectRuns } from "../lib/generation-history";
+import { logger } from "../lib/logger";
+import { getStylePreset } from "../lib/style-presets";
 import type { ArchitecturePlan, SpmDependency, AccuracyReport } from "../lib/types";
 
 const router: IRouter = Router();
@@ -64,11 +76,29 @@ router.get("/templates", (_req, res) => {
 
 router.get("/projects", async (req, res) => {
   try {
+    if (!req.user) {
+      res.json({ data: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 0 } });
+      return;
+    }
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
+    const offset = (page - 1) * limit;
+
+    const [totalRow] = await db
+      .select({ count: count() })
+      .from(projectsTable)
+      .where(eq(projectsTable.userId, req.user.id));
+    const total = totalRow.count;
+    const totalPages = Math.ceil(total / limit);
+
     const projects = await db
       .select()
       .from(projectsTable)
-      .orderBy(desc(projectsTable.updatedAt));
-    res.json(projects);
+      .where(eq(projectsTable.userId, req.user.id))
+      .orderBy(desc(projectsTable.updatedAt))
+      .limit(limit)
+      .offset(offset);
+    res.json({ data: projects, pagination: { page, limit, total, totalPages } });
   } catch (err) {
     req.log.error({ err }, "Failed to list projects");
     res.status(500).json({ error: "Failed to list projects" });
@@ -84,6 +114,7 @@ router.post("/projects", async (req, res) => {
         name: body.name,
         prompt: body.prompt,
         framework: body.framework,
+        stylePreset: body.stylePreset ?? null,
         status: "pending",
         fileCount: 0,
         userId: req.user?.id ?? null,
@@ -98,11 +129,17 @@ router.post("/projects", async (req, res) => {
 
 router.get("/projects/recent", async (req, res) => {
   try {
+    if (!req.user) {
+      res.json([]);
+      return;
+    }
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 5));
     const projects = await db
       .select()
       .from(projectsTable)
+      .where(eq(projectsTable.userId, req.user.id))
       .orderBy(desc(projectsTable.updatedAt))
-      .limit(5);
+      .limit(limit);
     res.json(projects);
   } catch (err) {
     req.log.error({ err }, "Failed to get recent projects");
@@ -158,6 +195,14 @@ router.get("/projects/:id", async (req, res) => {
       .from(projectsTable)
       .where(eq(projectsTable.id, id));
     if (!project) { res.status(404).json({ error: "Project not found" }); return; }
+    // Ownership check: only the owner can access, or unauthenticated projects with no owner
+    if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
+      res.status(404).json({ error: "Project not found" }); return;
+    }
+    if (project.userId === null && req.user) {
+      // Authenticated users cannot access ownerless projects directly (use share token)
+      res.status(404).json({ error: "Project not found" }); return;
+    }
     res.json(project);
   } catch (err) {
     req.log.error({ err }, "Failed to get project");
@@ -168,6 +213,17 @@ router.get("/projects/:id", async (req, res) => {
 router.delete("/projects/:id", async (req, res) => {
   try {
     const { id } = DeleteProjectParams.parse(req.params);
+    const [project] = await db
+      .select()
+      .from(projectsTable)
+      .where(eq(projectsTable.id, id));
+    if (!project) { res.status(404).json({ error: "Project not found" }); return; }
+    if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
+      res.status(404).json({ error: "Project not found" }); return;
+    }
+    if (project.userId === null && req.user) {
+      res.status(404).json({ error: "Project not found" }); return;
+    }
     await db.delete(projectsTable).where(eq(projectsTable.id, id));
     res.status(204).send();
   } catch (err) {
@@ -179,6 +235,17 @@ router.delete("/projects/:id", async (req, res) => {
 router.get("/projects/:id/files", async (req, res) => {
   try {
     const { id } = GetProjectFilesParams.parse(req.params);
+    const [project] = await db
+      .select()
+      .from(projectsTable)
+      .where(eq(projectsTable.id, id));
+    if (!project) { res.status(404).json({ error: "Project not found" }); return; }
+    if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
+      res.status(404).json({ error: "Project not found" }); return;
+    }
+    if (project.userId === null && req.user) {
+      res.status(404).json({ error: "Project not found" }); return;
+    }
     const files = await db
       .select()
       .from(projectFilesTable)
@@ -202,6 +269,12 @@ router.post("/projects/:id/share", async (req, res) => {
       .where(eq(projectsTable.id, id));
 
     if (!project) { res.status(404).json({ error: "Project not found" }); return; }
+    if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
+      res.status(404).json({ error: "Project not found" }); return;
+    }
+    if (project.userId === null && req.user) {
+      res.status(404).json({ error: "Project not found" }); return;
+    }
 
     let token = project.shareToken;
     if (!token) {
@@ -278,7 +351,19 @@ router.get("/projects/:id/preview", async (req, res) => {
       return;
     }
     const [project] = await db.select().from(projectsTable).where(eq(projectsTable.id, id)).limit(1);
-    if (!project || !project.livePreviewHtml) {
+    if (!project) {
+      res.status(404).type("text/html").send("<!doctype html><meta charset=utf-8><title>No preview</title><body style=\"font-family:-apple-system,sans-serif;background:#000;color:#888;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;padding:1rem;font-size:13px;\">Preview not yet available.</body>");
+      return;
+    }
+    if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
+      res.status(404).type("text/html").send("<!doctype html><meta charset=utf-8><title>No preview</title><body style=\"font-family:-apple-system,sans-serif;background:#000;color:#888;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;padding:1rem;font-size:13px;\">Preview not yet available.</body>");
+      return;
+    }
+    if (project.userId === null && req.user) {
+      res.status(404).type("text/html").send("<!doctype html><meta charset=utf-8><title>No preview</title><body style=\"font-family:-apple-system,sans-serif;background:#000;color:#888;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;padding:1rem;font-size:13px;\">Preview not yet available.</body>");
+      return;
+    }
+    if (!project.livePreviewHtml) {
       res.status(404).type("text/html").send("<!doctype html><meta charset=utf-8><title>No preview</title><body style=\"font-family:-apple-system,sans-serif;background:#000;color:#888;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;padding:1rem;font-size:13px;\">Preview not yet available.</body>");
       return;
     }
@@ -315,6 +400,12 @@ router.get("/projects/:id/download", async (req, res) => {
       .where(eq(projectsTable.id, id));
 
     if (!project) { res.status(404).json({ error: "Project not found" }); return; }
+    if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
+      res.status(404).json({ error: "Project not found" }); return;
+    }
+    if (project.userId === null && req.user) {
+      res.status(404).json({ error: "Project not found" }); return;
+    }
 
     const files = await db
       .select()
@@ -358,10 +449,24 @@ async function runPlanningPhase(
   frameworkName: string,
   additionalContext: string | null,
   provider: Provider = "openai",
+  stylePresetId: string | null = null,
 ): Promise<void> {
   const contextBlock = additionalContext
     ? `\nAdditional context from the user: ${additionalContext}`
     : "";
+
+  const styleBlock = (() => {
+    if (!stylePresetId) return "";
+    const preset = getStylePreset(stylePresetId);
+    if (!preset) return "";
+    return `\n\n═══ STYLE PRESET: ${preset.name.toUpperCase()} ═══
+The user has selected the "${preset.name}" visual style. Apply these design guidelines throughout:
+- Color Palette: ${preset.colorPalette}
+- Typography: ${preset.typographyStyle}
+- Animations: ${preset.animationStyle}
+- Component Style: ${preset.componentStyle}
+Ensure the Theme.swift / DesignSystem reflects this preset's visual identity.\n`;
+  })();
 
   sendEvent({ type: "planning", message: "Designing architecture..." });
 
@@ -439,7 +544,7 @@ Other rules:
 - Always include a single @main entry-point Swift file in fileList. For SwiftUI: a file ending in "App.swift" containing \`@main struct ...App: App\`. For UIKit: an "AppDelegate.swift" file (UIApplicationDelegate) plus a "SceneDelegate.swift" file.
 - Do not add markdown or any text outside the JSON object.
 ${IOS_QUALITY_STANDARDS}
-When writing each fileList[].purpose, name the SPECIFIC modern APIs the file will use (e.g. "Uses @Observable + @MainActor; NavigationStack with navigationDestination(for:); ContentUnavailableView for empty state") so the synthesizer cannot fall back to deprecated patterns.`;
+When writing each fileList[].purpose, name the SPECIFIC modern APIs the file will use (e.g. "Uses @Observable + @MainActor; NavigationStack with navigationDestination(for:); ContentUnavailableView for empty state") so the synthesizer cannot fall back to deprecated patterns.${styleBlock}`;
 
   const planningUserMessage = `Plan the architecture for this iOS ${frameworkName} app:
 
@@ -497,6 +602,16 @@ Produce the JSON architecture plan now.`;
     .update(projectsTable)
     .set({ architecturePlan: planJson, status: "awaiting_approval" })
     .where(eq(projectsTable.id, projectId));
+
+  // Record plan revision for audit trail
+  recordProjectRevision({
+    projectId,
+    userId: undefined,
+    revisionType: "plan",
+    payload: architecturePlan,
+    message: "Architecture plan generated",
+  }).catch((err) => { logger.error({ err }, "Failed to record generation history"); });
+
   sendEvent({ type: "plan", plan: architecturePlan });
   sendEvent({ type: "awaiting_approval", plan: architecturePlan });
   res.end();
@@ -515,6 +630,9 @@ router.post("/projects/:id/generate", generationLimiter, enforceQuota, async (re
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders();
 
+  const heartbeatInterval = setInterval(() => { res.write(`: heartbeat\n\n`); }, 15000);
+  res.on("close", () => { clearInterval(heartbeatInterval); });
+
   const sendEvent = (data: object) => {
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
@@ -526,6 +644,18 @@ router.post("/projects/:id/generate", generationLimiter, enforceQuota, async (re
       .where(eq(projectsTable.id, id));
 
     if (!project) {
+      sendEvent({ error: "Project not found" });
+      res.end();
+      return;
+    }
+
+    // Ownership check
+    if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
+      sendEvent({ error: "Project not found" });
+      res.end();
+      return;
+    }
+    if (project.userId === null && req.user) {
       sendEvent({ error: "Project not found" });
       res.end();
       return;
@@ -593,6 +723,7 @@ router.post("/projects/:id/generate", generationLimiter, enforceQuota, async (re
       frameworkName,
       additionalContext,
       provider,
+      project.stylePreset ?? null,
     );
     return;
   } catch (err) {
@@ -603,6 +734,13 @@ router.post("/projects/:id/generate", generationLimiter, enforceQuota, async (re
         .set({ status: "error" })
         .where(eq(projectsTable.id, id));
     } catch (_) {}
+    // Record failed generation run
+    recordGenerationRun({
+      projectId: id,
+      userId: req.user?.id,
+      status: "failed",
+      errorMessage: err instanceof Error ? err.message : "Generation failed",
+    }).catch((err) => { logger.error({ err }, "Failed to record generation history"); });
     sendEvent({ type: "error", message: "Generation failed" });
     res.end();
   }
@@ -624,6 +762,9 @@ router.post("/projects/:id/answer-clarifications", async (req, res) => {
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders();
 
+  const heartbeatInterval = setInterval(() => { res.write(`: heartbeat\n\n`); }, 15000);
+  res.on("close", () => { clearInterval(heartbeatInterval); });
+
   const sendEvent = (data: object) => {
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
@@ -635,6 +776,18 @@ router.post("/projects/:id/answer-clarifications", async (req, res) => {
       .where(eq(projectsTable.id, id));
 
     if (!project) {
+      sendEvent({ type: "error", message: "Project not found" });
+      res.end();
+      return;
+    }
+
+    // Ownership check
+    if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
+      sendEvent({ type: "error", message: "Project not found" });
+      res.end();
+      return;
+    }
+    if (project.userId === null && req.user) {
       sendEvent({ type: "error", message: "Project not found" });
       res.end();
       return;
@@ -669,6 +822,7 @@ router.post("/projects/:id/answer-clarifications", async (req, res) => {
       frameworkName,
       additionalContext ?? null,
       resolveProvider((req.query as Record<string, string>).provider),
+      project.stylePreset ?? null,
     );
   } catch (err) {
     req.log.error({ err }, "Answer-clarifications phase failed");
@@ -702,6 +856,9 @@ router.post("/projects/:id/approve-plan", generationLimiter, enforceQuota, async
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders();
 
+  const heartbeatInterval = setInterval(() => { res.write(`: heartbeat\n\n`); }, 15000);
+  res.on("close", () => { clearInterval(heartbeatInterval); });
+
   const sendEvent = (data: object) => {
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
@@ -713,6 +870,18 @@ router.post("/projects/:id/approve-plan", generationLimiter, enforceQuota, async
       .where(eq(projectsTable.id, id));
 
     if (!project) {
+      sendEvent({ type: "error", message: "Project not found" });
+      res.end();
+      return;
+    }
+
+    // Ownership check
+    if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
+      sendEvent({ type: "error", message: "Project not found" });
+      res.end();
+      return;
+    }
+    if (project.userId === null && req.user) {
       sendEvent({ type: "error", message: "Project not found" });
       res.end();
       return;
@@ -1129,14 +1298,112 @@ Generate Swift sources only. Place every file under ${appTargetName}/. Always in
       previewAvailable: !!livePreviewHtml,
       qualityReport,
     });
+
+    // Record successful build revision and generation run
+    recordProjectRevision({
+      projectId: id,
+      userId: req.user?.id,
+      revisionType: "build",
+      payload: { fileCount: finalFileCount, description: parsed.description, accuracyScore: report?.overallScore },
+      message: "Code generation completed",
+    }).catch((err) => { logger.error({ err }, "Failed to record generation history"); });
+    recordGenerationRun({
+      projectId: id,
+      userId: req.user?.id,
+      status: "completed",
+      provider,
+    }).catch((err) => { logger.error({ err }, "Failed to record generation history"); });
+
     res.end();
   } catch (err) {
     req.log.error({ err }, "Approve-plan phase 2 generation failed");
     try {
       await db.update(projectsTable).set({ status: "error" }).where(eq(projectsTable.id, id));
     } catch (_) {}
+    // Record failed generation run
+    recordGenerationRun({
+      projectId: id,
+      userId: req.user?.id,
+      status: "failed",
+      provider,
+      errorMessage: err instanceof Error ? err.message : "Code generation failed",
+    }).catch((err) => { logger.error({ err }, "Failed to record generation history"); });
     sendEvent({ type: "error", message: "Code generation failed" });
     res.end();
+  }
+});
+
+// ── History & Runs endpoints ────────────────────────────────────────────────
+
+router.get("/projects/:id/history", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (isNaN(id)) {
+      res.status(400).json({ error: "Invalid project ID" });
+      return;
+    }
+
+    const [project] = await db
+      .select()
+      .from(projectsTable)
+      .where(eq(projectsTable.id, id));
+
+    if (!project) {
+      res.status(404).json({ error: "Project not found" });
+      return;
+    }
+
+    // Ownership check
+    if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
+      res.status(404).json({ error: "Project not found" });
+      return;
+    }
+    if (project.userId === null && req.user) {
+      res.status(404).json({ error: "Project not found" });
+      return;
+    }
+
+    const revisions = await getProjectHistory(id);
+    res.json(revisions);
+  } catch (err) {
+    req.log.error({ err }, "Failed to get project history");
+    res.status(500).json({ error: "Failed to get project history" });
+  }
+});
+
+router.get("/projects/:id/runs", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (isNaN(id)) {
+      res.status(400).json({ error: "Invalid project ID" });
+      return;
+    }
+
+    const [project] = await db
+      .select()
+      .from(projectsTable)
+      .where(eq(projectsTable.id, id));
+
+    if (!project) {
+      res.status(404).json({ error: "Project not found" });
+      return;
+    }
+
+    // Ownership check
+    if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
+      res.status(404).json({ error: "Project not found" });
+      return;
+    }
+    if (project.userId === null && req.user) {
+      res.status(404).json({ error: "Project not found" });
+      return;
+    }
+
+    const runs = await getProjectRuns(id);
+    res.json(runs);
+  } catch (err) {
+    req.log.error({ err }, "Failed to get project runs");
+    res.status(500).json({ error: "Failed to get project runs" });
   }
 });
 
