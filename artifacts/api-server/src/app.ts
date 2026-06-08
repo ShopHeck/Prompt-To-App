@@ -39,6 +39,8 @@ app.use(cors({ origin: corsOrigin, credentials: true }));
 app.use(cookieParser());
 // Raw body for Stripe webhook signature verification
 app.use("/api/billing/webhook", express.raw({ type: "application/json" }));
+// Higher body limit for visual-feedback endpoint (base64 screenshots up to ~5MB)
+app.use("/api/projects/:id/visual-feedback", express.json({ limit: "5mb" }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(csrfProtection);

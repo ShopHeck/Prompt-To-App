@@ -36,6 +36,18 @@ router.post("/projects/:id/generate-web", generationLimiter, enforceQuota, async
       return;
     }
 
+    // Ownership check
+    if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
+      sendEvent({ type: "error", message: "Project not found" });
+      res.end();
+      return;
+    }
+    if (project.userId === null && req.user) {
+      sendEvent({ type: "error", message: "Project not found" });
+      res.end();
+      return;
+    }
+
     if (project.framework !== "react") {
       sendEvent({ type: "error", message: "Project framework must be 'react' for web generation" });
       res.end();

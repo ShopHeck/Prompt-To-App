@@ -49,6 +49,7 @@ import { evaluateQuality, type QualityReport } from "../lib/quality-scorer";
 import { generationLimiter } from "../middleware/rate-limit";
 import { enforceQuota, incrementUsage } from "../middleware/quota";
 import { recordGenerationRun, recordProjectRevision, getProjectHistory, getProjectRuns } from "../lib/generation-history";
+import { logger } from "../lib/logger";
 import { getStylePreset } from "../lib/style-presets";
 import type { ArchitecturePlan, SpmDependency, AccuracyReport } from "../lib/types";
 
@@ -609,7 +610,7 @@ Produce the JSON architecture plan now.`;
     revisionType: "plan",
     payload: architecturePlan,
     message: "Architecture plan generated",
-  }).catch(() => { /* non-fatal */ });
+  }).catch((err) => { logger.error({ err }, "Failed to record generation history"); });
 
   sendEvent({ type: "plan", plan: architecturePlan });
   sendEvent({ type: "awaiting_approval", plan: architecturePlan });
@@ -739,7 +740,7 @@ router.post("/projects/:id/generate", generationLimiter, enforceQuota, async (re
       userId: req.user?.id,
       status: "failed",
       errorMessage: err instanceof Error ? err.message : "Generation failed",
-    }).catch(() => { /* non-fatal */ });
+    }).catch((err) => { logger.error({ err }, "Failed to record generation history"); });
     sendEvent({ type: "error", message: "Generation failed" });
     res.end();
   }
@@ -775,6 +776,18 @@ router.post("/projects/:id/answer-clarifications", async (req, res) => {
       .where(eq(projectsTable.id, id));
 
     if (!project) {
+      sendEvent({ type: "error", message: "Project not found" });
+      res.end();
+      return;
+    }
+
+    // Ownership check
+    if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
+      sendEvent({ type: "error", message: "Project not found" });
+      res.end();
+      return;
+    }
+    if (project.userId === null && req.user) {
       sendEvent({ type: "error", message: "Project not found" });
       res.end();
       return;
@@ -857,6 +870,18 @@ router.post("/projects/:id/approve-plan", generationLimiter, enforceQuota, async
       .where(eq(projectsTable.id, id));
 
     if (!project) {
+      sendEvent({ type: "error", message: "Project not found" });
+      res.end();
+      return;
+    }
+
+    // Ownership check
+    if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
+      sendEvent({ type: "error", message: "Project not found" });
+      res.end();
+      return;
+    }
+    if (project.userId === null && req.user) {
       sendEvent({ type: "error", message: "Project not found" });
       res.end();
       return;
@@ -1281,13 +1306,13 @@ Generate Swift sources only. Place every file under ${appTargetName}/. Always in
       revisionType: "build",
       payload: { fileCount: finalFileCount, description: parsed.description, accuracyScore: report?.overallScore },
       message: "Code generation completed",
-    }).catch(() => { /* non-fatal */ });
+    }).catch((err) => { logger.error({ err }, "Failed to record generation history"); });
     recordGenerationRun({
       projectId: id,
       userId: req.user?.id,
       status: "completed",
       provider,
-    }).catch(() => { /* non-fatal */ });
+    }).catch((err) => { logger.error({ err }, "Failed to record generation history"); });
 
     res.end();
   } catch (err) {
@@ -1302,7 +1327,7 @@ Generate Swift sources only. Place every file under ${appTargetName}/. Always in
       status: "failed",
       provider,
       errorMessage: err instanceof Error ? err.message : "Code generation failed",
-    }).catch(() => { /* non-fatal */ });
+    }).catch((err) => { logger.error({ err }, "Failed to record generation history"); });
     sendEvent({ type: "error", message: "Code generation failed" });
     res.end();
   }

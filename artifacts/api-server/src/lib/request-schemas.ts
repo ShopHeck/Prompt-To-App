@@ -38,7 +38,8 @@ export const generateIconSchema = z.object({
 export const visualFeedbackSchema = z.object({
   screenshot: z
     .string()
-    .min(1, "Screenshot (base64) is required"),
+    .min(1, "Screenshot (base64) is required")
+    .max(7_000_000, "Screenshot must be 7000000 characters or fewer"),
   instruction: z
     .string()
     .trim()

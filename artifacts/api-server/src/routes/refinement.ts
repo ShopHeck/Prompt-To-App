@@ -6,6 +6,7 @@ import { validateBody } from "../middleware/validate";
 import { refineSchema } from "../lib/request-schemas";
 import { callWithFallback, resolveProvider, DEFAULT_MODELS, FALLBACK_MODELS } from "../lib/ai-client";
 import { recordProjectRevision } from "../lib/generation-history";
+import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
 
@@ -211,7 +212,7 @@ Return ONLY the JSON with modified/new files and a summary.`;
       revisionType: "refinement",
       payload: { filesChanged: changedPaths, summary },
       message: instruction,
-    }).catch(() => { /* non-fatal */ });
+    }).catch((err) => { logger.error({ err }, "Failed to record generation history"); });
 
     res.json({
       summary,
