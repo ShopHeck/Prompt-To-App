@@ -1,0 +1,34 @@
+{
+  "id": "FEAT-003",
+  "type": "feat",
+  "description": "P2 Architecture - Port Spec Revision Repository for audit trail + extract generation service layer",
+  "status": "completed",
+  "steps": [
+    "1. Create a new DB migration lib/db/migrations/0008_add_generation_history.sql that adds: (a) generation_runs table (id SERIAL PK, project_id INT NOT NULL REFERENCES projects ON DELETE CASCADE, user_id INT REFERENCES users, status TEXT NOT NULL DEFAULT 'pending', provider TEXT, model TEXT, prompt_tokens INT, completion_tokens INT, duration_ms INT, error_message TEXT, created_at TIMESTAMPTZ DEFAULT NOW()); (b) project_revisions table (id SERIAL PK, project_id INT NOT NULL REFERENCES projects ON DELETE CASCADE, user_id INT REFERENCES users, revision_type TEXT NOT NULL, payload JSONB NOT NULL, message TEXT, created_at TIMESTAMPTZ DEFAULT NOW()); Add indexes on project_id for both tables.",
+    "2. Add the new tables to the Drizzle schema: create lib/db/src/schema/generation_runs.ts and lib/db/src/schema/project_revisions.ts following the pattern in projects.ts. Export from lib/db/src/schema/index.ts.",
+    "3. Create artifacts/api-server/src/lib/generation-service.ts: extract the generation pipeline logic from routes/projects.ts into a class or set of functions. Include methods: startGeneration(), runClarification(), runPlanning(), runBuilding(), runValidation(), runRepair(). Each method should record a generation_run and project_revision entry.",
+    "4. Refactor artifacts/api-server/src/routes/projects.ts to use the new generation service. The route handlers become thin adapters that set up SSE, call the service, and forward events.",
+    "5. Add a GET /api/projects/:id/history endpoint that returns all project_revisions for a project (ordered by created_at DESC). Protected by ownership check.",
+    "6. Add a GET /api/projects/:id/runs endpoint that returns all generation_runs for a project. Protected by ownership check.",
+    "7. Update the test setup to include the new migration, and add basic tests for the history/runs endpoints."
+  ],
+  "acceptance_criteria": [
+    "Migration 0008 creates generation_runs and project_revisions tables with proper indexes",
+    "Drizzle schema includes new tables and exports them",
+    "Generation service encapsulates the pipeline logic outside route handlers",
+    "routes/projects.ts is significantly shorter (generation logic moved to service)",
+    "GET /api/projects/:id/history returns revisions for the project",
+    "GET /api/projects/:id/runs returns generation runs for the project",
+    "Generation creates revision entries when it completes (plan saved, files saved)",
+    "All existing tests pass",
+    "New tests for history/runs endpoints pass"
+  ],
+  "verification": [
+    "pnpm run typecheck",
+    "pnpm run lint",
+    "pnpm run build",
+    "pnpm run test"
+  ],
+  "blocked_reason": null,
+  "findings": "Per orchestrator guidance, steps 3 and 4 (full service extraction + route refactor) were scoped down to adding recording hooks at key points rather than fully extracting the 1000+ line generation pipeline into a separate service. The infrastructure (tables, service module, endpoints, recording) is all in place. A full extraction would be a separate large refactor. Postgres needed to be started with the .pgdata directory at /projects/sandbox/.pgdata for tests. The unused Provider type import in refinement.ts was cleaned up."
+}
