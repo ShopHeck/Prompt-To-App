@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import type { Request } from "express";
 import { db, usersTable, eq } from "@workspace/db";
 import {
   hashPassword,
@@ -11,6 +12,14 @@ import { authLimiter } from "../middleware/rate-limit";
 import { getQuota } from "../middleware/quota";
 import { validateBody } from "../middleware/validate";
 import { registerSchema, loginSchema, changePasswordSchema } from "../lib/request-schemas";
+import { auditLog } from "../lib/audit-log";
+
+function getClientIp(req: Request): string {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (typeof forwarded === "string") return forwarded.split(",")[0]!.trim();
+  if (Array.isArray(forwarded) && forwarded.length > 0) return forwarded[0]!.split(",")[0]!.trim();
+  return req.ip ?? "unknown";
+}
 
 const router: IRouter = Router();
 
@@ -48,6 +57,8 @@ router.post("/auth/register", authLimiter, validateBody(registerSchema), async (
 
     await createSession(user.id, res);
 
+    auditLog({ userId: user.id, action: "register", ipAddress: getClientIp(req), metadata: { email } });
+
     res.status(201).json({
       user: { id: user.id, email: user.email, displayName: user.displayName, plan: user.plan },
     });
@@ -70,11 +81,14 @@ router.post("/auth/login", authLimiter, validateBody(loginSchema), async (req, r
       .where(eq(usersTable.email, email));
 
     if (!user || !verifyPassword(password, user.passwordHash)) {
+      auditLog({ userId: null, action: "login_failed", ipAddress: getClientIp(req), metadata: { email } });
       res.status(401).json({ error: "Invalid email or password" });
       return;
     }
 
     await createSession(user.id, res);
+
+    auditLog({ userId: user.id, action: "login_success", ipAddress: getClientIp(req), metadata: { email } });
 
     res.json({
       user: { id: user.id, email: user.email, displayName: user.displayName, plan: user.plan },
@@ -87,7 +101,9 @@ router.post("/auth/login", authLimiter, validateBody(loginSchema), async (req, r
 
 router.post("/auth/logout", async (req, res) => {
   try {
+    const userId = req.user?.id ?? null;
     await destroySession(req, res);
+    auditLog({ userId, action: "session_destroy", ipAddress: getClientIp(req) });
     res.json({ ok: true });
   } catch (err) {
     req.log.error({ err }, "Logout failed");
@@ -134,6 +150,8 @@ router.put("/auth/password", requireAuth, validateBody(changePasswordSchema), as
       .update(usersTable)
       .set({ passwordHash: hashPassword(newPassword) })
       .where(eq(usersTable.id, req.user!.id));
+
+    auditLog({ userId: req.user!.id, action: "password_change", ipAddress: getClientIp(req) });
 
     res.json({ ok: true });
   } catch (err) {
