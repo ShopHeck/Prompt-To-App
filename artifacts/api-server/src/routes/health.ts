@@ -5,6 +5,7 @@ import { isEnabled as isSentryEnabled } from "../lib/sentry";
 import { metricsSnapshot, generationMetricsSnapshot } from "../middleware/metrics";
 import { requireAuth } from "../middleware/auth";
 import { jobQueue } from "../lib/job-queue";
+import { getProjectTraceSpans } from "../lib/tracing";
 
 const router: IRouter = Router();
 const startedAt = Date.now();
@@ -80,6 +81,21 @@ router.get("/admin/jobs", requireAuth, requireAdmin, async (_req, res) => {
     res.json(metrics);
   } catch (err) {
     res.status(500).json({ error: "Failed to get job queue metrics" });
+  }
+});
+
+router.get("/admin/traces/:projectId", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const rawId = req.params.projectId;
+    const projectId = parseInt(Array.isArray(rawId) ? rawId[0] : rawId, 10);
+    if (isNaN(projectId)) {
+      res.status(400).json({ error: "Invalid project ID" });
+      return;
+    }
+    const spans = await getProjectTraceSpans(projectId);
+    res.json({ projectId, spans });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to get trace spans" });
   }
 });
 

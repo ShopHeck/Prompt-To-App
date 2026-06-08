@@ -50,8 +50,23 @@ app.use("/api", apiLimiter, router);
 // Serve frontend static files in production
 const publicDir = path.resolve(import.meta.dirname, "public");
 if (fs.existsSync(publicDir)) {
-  app.use(express.static(publicDir, { maxAge: "1y", immutable: true }));
+  app.use(express.static(publicDir, {
+    maxAge: "1y",
+    immutable: true,
+    setHeaders(res, filePath) {
+      // Hashed assets get immutable caching; CDN edge gets Surrogate-Control
+      if (/\.[0-9a-f]{8,}\.(js|css|woff2?|png|jpg|svg)$/.test(filePath)) {
+        res.setHeader("Surrogate-Control", "max-age=31536000, immutable");
+      } else {
+        // Non-hashed assets (index.html) get shorter cache with revalidation
+        res.setHeader("Cache-Control", "public, max-age=300, s-maxage=600, stale-while-revalidate=86400");
+        res.setHeader("Surrogate-Control", "max-age=600");
+      }
+    },
+  }));
   app.get("/{*splat}", (_req, res) => {
+    res.setHeader("Cache-Control", "public, max-age=300, s-maxage=600, stale-while-revalidate=86400");
+    res.setHeader("Surrogate-Control", "max-age=600");
     res.sendFile(path.join(publicDir, "index.html"));
   });
 }

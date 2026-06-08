@@ -1,0 +1,11 @@
+# Example crontab entry for daily database backups at 3:00 AM
+#
+# To install:
+#   crontab -e
+#   # Then paste the line below (adjust paths as needed)
+#
+# Environment variables must be set in the cron environment or sourced from a file.
+# The backup script will store files in BACKUP_DIR and clean up after RETENTION_DAYS.
+
+# Daily backup at 3:00 AM server time
+0 3 * * * DATABASE_URL="postgresql://user:pass@localhost:5432/promptios" BACKUP_DIR="/var/backups/promptios" /path/to/Prompt-To-App/scripts/backup-db.sh >> /var/log/promptios-backup.log 2>&1

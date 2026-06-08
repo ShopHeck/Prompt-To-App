@@ -385,12 +385,27 @@ router.get("/share/:token", async (req, res) => {
 });
 
 // ── Preview routes ──────────────────────────────────────────────────────────
-function sendPreviewHtml(res: Response, html: string) {
+import crypto from "node:crypto";
+
+function sendPreviewHtml(res: Response, html: string, opts?: { completed?: boolean }) {
+  const isCompleted = opts?.completed ?? false;
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com; style-src 'unsafe-inline' https://cdn.tailwindcss.com https://fonts.googleapis.com; font-src https://fonts.gstatic.com data:; img-src data: blob: https:; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'");
   res.setHeader("X-Frame-Options", "SAMEORIGIN");
   res.setHeader("Referrer-Policy", "no-referrer");
-  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Vary", "Accept-Encoding");
+
+  if (isCompleted) {
+    // Completed projects can be cached by CDN and browser
+    const etag = `"${crypto.createHash("md5").update(html).digest("hex")}"`;
+    res.setHeader("ETag", etag);
+    res.setHeader("Cache-Control", "public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800");
+    res.setHeader("Surrogate-Control", "max-age=86400");
+  } else {
+    // Projects still generating should not be cached
+    res.setHeader("Cache-Control", "no-store");
+  }
+
   res.send(html);
 }
 
@@ -418,7 +433,7 @@ router.get("/projects/:id/preview", async (req, res) => {
       res.status(404).type("text/html").send(noPreviewHtml);
       return;
     }
-    sendPreviewHtml(res, project.livePreviewHtml);
+    sendPreviewHtml(res, project.livePreviewHtml, { completed: project.status === "complete" });
   } catch (err) {
     req.log.error({ err }, "Failed to load project preview");
     res.status(500).json({ error: "Failed to load preview" });
@@ -433,7 +448,7 @@ router.get("/share/:token/preview", async (req, res) => {
       res.status(404).type("text/html").send("<!doctype html><meta charset=utf-8><title>No preview</title><body style=\"font-family:-apple-system,sans-serif;background:#000;color:#888;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;padding:1rem;font-size:13px;\">Preview not available.</body>");
       return;
     }
-    sendPreviewHtml(res, project.livePreviewHtml);
+    sendPreviewHtml(res, project.livePreviewHtml, { completed: project.status === "complete" });
   } catch (err) {
     req.log.error({ err }, "Failed to load shared preview");
     res.status(500).json({ error: "Failed to load preview" });
