@@ -33,6 +33,7 @@ import { enforceQuota } from "../middleware/quota";
 import { recordGenerationRun, getProjectHistory, getProjectRuns } from "../lib/generation-history";
 import { logger } from "../lib/logger";
 import { generationService } from "../lib/generation-service";
+import { jobQueue } from "../lib/job-queue";
 
 const router: IRouter = Router();
 
@@ -401,6 +402,15 @@ router.post("/projects/:id/generate", generationLimiter, enforceQuota, async (re
       .where(eq(projectsTable.id, id));
     sendEvent({ type: "status", status: "generating" });
 
+    // Record a job for crash recovery before starting generation
+    const job = await jobQueue.enqueue({
+      projectId: id,
+      userId: req.user?.id ?? null,
+      provider,
+      payload: { phase: "planning", additionalContext, framework: project.framework },
+    });
+    sendEvent({ type: "job_created", jobId: job.id });
+
     sendEvent({ type: "clarify_check", message: "Checking prompt for ambiguity..." });
     const clarify = await generationService.detectClarifications(project.prompt, frameworkName, provider);
 
@@ -414,6 +424,7 @@ router.post("/projects/:id/generate", generationLimiter, enforceQuota, async (re
         .where(eq(projectsTable.id, id));
       sendEvent({ type: "clarify_questions", questions: clarify.questions });
       sendEvent({ type: "awaiting_clarification", questions: clarify.questions });
+      await jobQueue.complete(job.id);
       res.end();
       return;
     }
@@ -436,6 +447,8 @@ router.post("/projects/:id/generate", generationLimiter, enforceQuota, async (re
       provider,
       stylePresetId: project.stylePreset ?? null,
     });
+    // Mark the crash-recovery job as completed
+    await jobQueue.complete(job.id);
     return;
   } catch (err) {
     req.log.error({ err }, "Generation failed");
@@ -568,6 +581,14 @@ router.post("/projects/:id/approve-plan", generationLimiter, enforceQuota, async
       .set({ status: "generating", architecturePlan: JSON.stringify(approvedPlan) })
       .where(eq(projectsTable.id, id));
 
+    // Record a job for crash recovery before starting code generation
+    const job = await jobQueue.enqueue({
+      projectId: id,
+      userId: req.user?.id ?? null,
+      provider,
+      payload: { phase: "code_generation", plan: approvedPlan, additionalContext: additionalContext ?? null },
+    });
+
     await generationService.runCodeGeneration(res, sendEvent, req.log, {
       projectId: id,
       approvedPlan,
@@ -575,6 +596,9 @@ router.post("/projects/:id/approve-plan", generationLimiter, enforceQuota, async
       provider,
       userId: req.user?.id,
     });
+
+    // Mark the crash-recovery job as completed
+    await jobQueue.complete(job.id);
   } catch (err) {
     req.log.error({ err }, "Approve-plan phase 2 generation failed");
     try {

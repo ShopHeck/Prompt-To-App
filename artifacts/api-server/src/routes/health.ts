@@ -4,6 +4,7 @@ import { db, sql } from "@workspace/db";
 import { isEnabled as isSentryEnabled } from "../lib/sentry";
 import { metricsSnapshot, generationMetricsSnapshot } from "../middleware/metrics";
 import { requireAuth } from "../middleware/auth";
+import { jobQueue } from "../lib/job-queue";
 
 const router: IRouter = Router();
 const startedAt = Date.now();
@@ -71,6 +72,15 @@ router.get("/admin/metrics", requireAuth, requireAdmin, (_req, res) => {
     generation: generationMetricsSnapshot(),
     uptime: Math.floor((Date.now() - startedAt) / 1000),
   });
+});
+
+router.get("/admin/jobs", requireAuth, requireAdmin, async (_req, res) => {
+  try {
+    const metrics = await jobQueue.getMetrics();
+    res.json(metrics);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to get job queue metrics" });
+  }
 });
 
 export default router;
