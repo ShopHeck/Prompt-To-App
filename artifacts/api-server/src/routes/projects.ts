@@ -20,6 +20,7 @@ const PROMPT_MAX_LENGTH = 10000;
 const CreateProjectBody = CreateProjectBodyBase.extend({
   prompt: z.string().max(PROMPT_MAX_LENGTH, `Prompt must be ${PROMPT_MAX_LENGTH} characters or fewer`),
   name: z.string().max(200, "Name must be 200 characters or fewer"),
+  stylePreset: z.string().max(50).optional(),
 });
 import { IOS_QUALITY_STANDARDS } from "../lib/ios-quality-standards";
 import { normalizeIosProject } from "../lib/xcode-scaffold";
@@ -48,6 +49,7 @@ import { evaluateQuality, type QualityReport } from "../lib/quality-scorer";
 import { generationLimiter } from "../middleware/rate-limit";
 import { enforceQuota, incrementUsage } from "../middleware/quota";
 import { recordGenerationRun, recordProjectRevision, getProjectHistory, getProjectRuns } from "../lib/generation-history";
+import { getStylePreset } from "../lib/style-presets";
 import type { ArchitecturePlan, SpmDependency, AccuracyReport } from "../lib/types";
 
 const router: IRouter = Router();
@@ -111,6 +113,7 @@ router.post("/projects", async (req, res) => {
         name: body.name,
         prompt: body.prompt,
         framework: body.framework,
+        stylePreset: body.stylePreset ?? null,
         status: "pending",
         fileCount: 0,
         userId: req.user?.id ?? null,
@@ -445,10 +448,24 @@ async function runPlanningPhase(
   frameworkName: string,
   additionalContext: string | null,
   provider: Provider = "openai",
+  stylePresetId: string | null = null,
 ): Promise<void> {
   const contextBlock = additionalContext
     ? `\nAdditional context from the user: ${additionalContext}`
     : "";
+
+  const styleBlock = (() => {
+    if (!stylePresetId) return "";
+    const preset = getStylePreset(stylePresetId);
+    if (!preset) return "";
+    return `\n\n═══ STYLE PRESET: ${preset.name.toUpperCase()} ═══
+The user has selected the "${preset.name}" visual style. Apply these design guidelines throughout:
+- Color Palette: ${preset.colorPalette}
+- Typography: ${preset.typographyStyle}
+- Animations: ${preset.animationStyle}
+- Component Style: ${preset.componentStyle}
+Ensure the Theme.swift / DesignSystem reflects this preset's visual identity.\n`;
+  })();
 
   sendEvent({ type: "planning", message: "Designing architecture..." });
 
@@ -526,7 +543,7 @@ Other rules:
 - Always include a single @main entry-point Swift file in fileList. For SwiftUI: a file ending in "App.swift" containing \`@main struct ...App: App\`. For UIKit: an "AppDelegate.swift" file (UIApplicationDelegate) plus a "SceneDelegate.swift" file.
 - Do not add markdown or any text outside the JSON object.
 ${IOS_QUALITY_STANDARDS}
-When writing each fileList[].purpose, name the SPECIFIC modern APIs the file will use (e.g. "Uses @Observable + @MainActor; NavigationStack with navigationDestination(for:); ContentUnavailableView for empty state") so the synthesizer cannot fall back to deprecated patterns.`;
+When writing each fileList[].purpose, name the SPECIFIC modern APIs the file will use (e.g. "Uses @Observable + @MainActor; NavigationStack with navigationDestination(for:); ContentUnavailableView for empty state") so the synthesizer cannot fall back to deprecated patterns.${styleBlock}`;
 
   const planningUserMessage = `Plan the architecture for this iOS ${frameworkName} app:
 
@@ -705,6 +722,7 @@ router.post("/projects/:id/generate", generationLimiter, enforceQuota, async (re
       frameworkName,
       additionalContext,
       provider,
+      project.stylePreset ?? null,
     );
     return;
   } catch (err) {
@@ -791,6 +809,7 @@ router.post("/projects/:id/answer-clarifications", async (req, res) => {
       frameworkName,
       additionalContext ?? null,
       resolveProvider((req.query as Record<string, string>).provider),
+      project.stylePreset ?? null,
     );
   } catch (err) {
     req.log.error({ err }, "Answer-clarifications phase failed");

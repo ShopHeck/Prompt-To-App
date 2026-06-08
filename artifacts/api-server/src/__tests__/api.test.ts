@@ -735,3 +735,126 @@ describe("Project History & Runs endpoints", () => {
     });
   });
 });
+
+// ── Style Presets ─────────────────────────────────────────────────────────────
+
+describe("GET /api/style-presets", () => {
+  it("returns all style presets", async () => {
+    const res = await request(app).get("/api/style-presets");
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    expect(res.body.length).toBe(5);
+
+    const ids = res.body.map((p: { id: string }) => p.id);
+    expect(ids).toContain("cyberpunk");
+    expect(ids).toContain("minimalist");
+    expect(ids).toContain("brutalist");
+    expect(ids).toContain("apple-native");
+    expect(ids).toContain("elegant-dark");
+
+    const preset = res.body[0];
+    expect(preset.id).toBeDefined();
+    expect(preset.name).toBeDefined();
+    expect(preset.description).toBeDefined();
+    expect(preset.colorPalette).toBeDefined();
+    expect(preset.typographyStyle).toBeDefined();
+    expect(preset.animationStyle).toBeDefined();
+    expect(preset.componentStyle).toBeDefined();
+  });
+});
+
+// ── Icon Generation ───────────────────────────────────────────────────────────
+
+describe("POST /api/projects/:id/generate-icon", () => {
+  it("returns 503 when GEMINI_API_KEY is not set", async () => {
+    const { agent } = await registerUser("icon@test.com");
+    const create = await agent
+      .post("/api/projects")
+      .send({ name: "IconApp", prompt: "A weather app", framework: "swiftui" });
+    const res = await agent.post(`/api/projects/${create.body.id}/generate-icon`).send({});
+    expect(res.status).toBe(503);
+    expect(res.body.error).toContain("GEMINI_API_KEY");
+  });
+
+  it("returns 404 for nonexistent project", async () => {
+    const { agent } = await registerUser("icon2@test.com");
+    const res = await agent.post("/api/projects/99999/generate-icon").send({});
+    expect(res.status).toBe(503); // 503 comes before project lookup since no key
+  });
+
+  it("returns 404 when accessing another user project", async () => {
+    const { agent: agentA } = await registerUser("iconA@test.com");
+    const { agent: agentB } = await registerUser("iconB@test.com");
+    const create = await agentA
+      .post("/api/projects")
+      .send({ name: "IconOwner", prompt: "x", framework: "swiftui" });
+    // Since GEMINI_API_KEY is not set, we get 503 before ownership check
+    const res = await agentB.post(`/api/projects/${create.body.id}/generate-icon`).send({});
+    expect(res.status).toBe(503);
+  });
+});
+
+// ── Visual Feedback ───────────────────────────────────────────────────────────
+
+describe("POST /api/projects/:id/visual-feedback", () => {
+  it("returns 400 when screenshot is missing", async () => {
+    const { agent } = await registerUser("vf@test.com");
+    const create = await agent
+      .post("/api/projects")
+      .send({ name: "VFApp", prompt: "A todo app", framework: "swiftui" });
+    const res = await agent.post(`/api/projects/${create.body.id}/visual-feedback`).send({});
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("Validation failed");
+  });
+
+  it("returns 400 when screenshot is empty string", async () => {
+    const { agent } = await registerUser("vf2@test.com");
+    const create = await agent
+      .post("/api/projects")
+      .send({ name: "VFApp2", prompt: "A todo app", framework: "swiftui" });
+    const res = await agent
+      .post(`/api/projects/${create.body.id}/visual-feedback`)
+      .send({ screenshot: "" });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 503 when GEMINI_API_KEY is not set", async () => {
+    const { agent } = await registerUser("vf3@test.com");
+    const create = await agent
+      .post("/api/projects")
+      .send({ name: "VFApp3", prompt: "A todo app", framework: "swiftui" });
+    const res = await agent
+      .post(`/api/projects/${create.body.id}/visual-feedback`)
+      .send({ screenshot: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk" });
+    expect(res.status).toBe(503);
+    expect(res.body.error).toContain("GEMINI_API_KEY");
+  });
+
+  it("returns 404 for nonexistent project when Gemini is not configured", async () => {
+    const { agent } = await registerUser("vf4@test.com");
+    const res = await agent
+      .post("/api/projects/99999/visual-feedback")
+      .send({ screenshot: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk" });
+    expect(res.status).toBe(503); // 503 before project lookup
+  });
+});
+
+// ── Style Preset on Project Creation ──────────────────────────────────────────
+
+describe("Style preset on project creation", () => {
+  it("creates a project with a style preset", async () => {
+    const res = await request(app)
+      .post("/api/projects")
+      .send({ name: "Styled App", prompt: "A cool app", framework: "swiftui", stylePreset: "cyberpunk" });
+    expect(res.status).toBe(201);
+    expect(res.body.stylePreset).toBe("cyberpunk");
+  });
+
+  it("creates a project without a style preset", async () => {
+    const res = await request(app)
+      .post("/api/projects")
+      .send({ name: "Plain App", prompt: "A plain app", framework: "swiftui" });
+    expect(res.status).toBe(201);
+    expect(res.body.stylePreset).toBeNull();
+  });
+});

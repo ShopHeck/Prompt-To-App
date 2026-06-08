@@ -10,6 +10,7 @@ export const projectsTable = pgTable("projects", {
   description: text("description"),
   status: text("status").notNull().default("pending"),
   framework: text("framework").notNull().default("swiftui"),
+  stylePreset: text("style_preset"),
   fileCount: integer("file_count").notNull().default(0),
   shareToken: text("share_token").unique(),
   architecturePlan: text("architecture_plan"),
