@@ -47,6 +47,7 @@ import { PATTERN_MENU, getSelectedPatterns } from "../lib/component-library";
 import { evaluateQuality, type QualityReport } from "../lib/quality-scorer";
 import { generationLimiter } from "../middleware/rate-limit";
 import { enforceQuota, incrementUsage } from "../middleware/quota";
+import { recordGenerationRun, recordProjectRevision, getProjectHistory, getProjectRuns } from "../lib/generation-history";
 import type { ArchitecturePlan, SpmDependency, AccuracyReport } from "../lib/types";
 
 const router: IRouter = Router();
@@ -583,6 +584,16 @@ Produce the JSON architecture plan now.`;
     .update(projectsTable)
     .set({ architecturePlan: planJson, status: "awaiting_approval" })
     .where(eq(projectsTable.id, projectId));
+
+  // Record plan revision for audit trail
+  recordProjectRevision({
+    projectId,
+    userId: undefined,
+    revisionType: "plan",
+    payload: architecturePlan,
+    message: "Architecture plan generated",
+  }).catch(() => { /* non-fatal */ });
+
   sendEvent({ type: "plan", plan: architecturePlan });
   sendEvent({ type: "awaiting_approval", plan: architecturePlan });
   res.end();
@@ -704,6 +715,13 @@ router.post("/projects/:id/generate", generationLimiter, enforceQuota, async (re
         .set({ status: "error" })
         .where(eq(projectsTable.id, id));
     } catch (_) {}
+    // Record failed generation run
+    recordGenerationRun({
+      projectId: id,
+      userId: req.user?.id,
+      status: "failed",
+      errorMessage: err instanceof Error ? err.message : "Generation failed",
+    }).catch(() => { /* non-fatal */ });
     sendEvent({ type: "error", message: "Generation failed" });
     res.end();
   }
@@ -1236,14 +1254,112 @@ Generate Swift sources only. Place every file under ${appTargetName}/. Always in
       previewAvailable: !!livePreviewHtml,
       qualityReport,
     });
+
+    // Record successful build revision and generation run
+    recordProjectRevision({
+      projectId: id,
+      userId: req.user?.id,
+      revisionType: "build",
+      payload: { fileCount: finalFileCount, description: parsed.description, accuracyScore: report?.overallScore },
+      message: "Code generation completed",
+    }).catch(() => { /* non-fatal */ });
+    recordGenerationRun({
+      projectId: id,
+      userId: req.user?.id,
+      status: "completed",
+      provider,
+    }).catch(() => { /* non-fatal */ });
+
     res.end();
   } catch (err) {
     req.log.error({ err }, "Approve-plan phase 2 generation failed");
     try {
       await db.update(projectsTable).set({ status: "error" }).where(eq(projectsTable.id, id));
     } catch (_) {}
+    // Record failed generation run
+    recordGenerationRun({
+      projectId: id,
+      userId: req.user?.id,
+      status: "failed",
+      provider,
+      errorMessage: err instanceof Error ? err.message : "Code generation failed",
+    }).catch(() => { /* non-fatal */ });
     sendEvent({ type: "error", message: "Code generation failed" });
     res.end();
+  }
+});
+
+// ── History & Runs endpoints ────────────────────────────────────────────────
+
+router.get("/projects/:id/history", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (isNaN(id)) {
+      res.status(400).json({ error: "Invalid project ID" });
+      return;
+    }
+
+    const [project] = await db
+      .select()
+      .from(projectsTable)
+      .where(eq(projectsTable.id, id));
+
+    if (!project) {
+      res.status(404).json({ error: "Project not found" });
+      return;
+    }
+
+    // Ownership check
+    if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
+      res.status(404).json({ error: "Project not found" });
+      return;
+    }
+    if (project.userId === null && req.user) {
+      res.status(404).json({ error: "Project not found" });
+      return;
+    }
+
+    const revisions = await getProjectHistory(id);
+    res.json(revisions);
+  } catch (err) {
+    req.log.error({ err }, "Failed to get project history");
+    res.status(500).json({ error: "Failed to get project history" });
+  }
+});
+
+router.get("/projects/:id/runs", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (isNaN(id)) {
+      res.status(400).json({ error: "Invalid project ID" });
+      return;
+    }
+
+    const [project] = await db
+      .select()
+      .from(projectsTable)
+      .where(eq(projectsTable.id, id));
+
+    if (!project) {
+      res.status(404).json({ error: "Project not found" });
+      return;
+    }
+
+    // Ownership check
+    if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
+      res.status(404).json({ error: "Project not found" });
+      return;
+    }
+    if (project.userId === null && req.user) {
+      res.status(404).json({ error: "Project not found" });
+      return;
+    }
+
+    const runs = await getProjectRuns(id);
+    res.json(runs);
+  } catch (err) {
+    req.log.error({ err }, "Failed to get project runs");
+    res.status(500).json({ error: "Failed to get project runs" });
   }
 });
 

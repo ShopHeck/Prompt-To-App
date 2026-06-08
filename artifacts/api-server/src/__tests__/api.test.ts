@@ -673,3 +673,65 @@ describe("POST /api/projects/:id/generate-web", () => {
     expect(res.text).toContain("not found");
   });
 });
+
+// ── History & Runs ────────────────────────────────────────────────────────────
+
+describe("Project History & Runs endpoints", () => {
+  describe("GET /api/projects/:id/history", () => {
+    it("returns empty array for project with no revisions", async () => {
+      const { agent } = await registerUser("hist@test.com");
+      const create = await agent
+        .post("/api/projects")
+        .send({ name: "HistProject", prompt: "test app", framework: "swiftui" });
+      const res = await agent.get(`/api/projects/${create.body.id}/history`);
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([]);
+    });
+
+    it("returns 404 for nonexistent project", async () => {
+      const { agent } = await registerUser("hist2@test.com");
+      const res = await agent.get("/api/projects/99999/history");
+      expect(res.status).toBe(404);
+    });
+
+    it("returns 404 when accessing another user project", async () => {
+      const { agent: agent1 } = await registerUser("owner1@test.com");
+      const create = await agent1
+        .post("/api/projects")
+        .send({ name: "Private", prompt: "private app", framework: "swiftui" });
+
+      const { agent: agent2 } = await registerUser("other1@test.com");
+      const res = await agent2.get(`/api/projects/${create.body.id}/history`);
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe("GET /api/projects/:id/runs", () => {
+    it("returns empty array for project with no runs", async () => {
+      const { agent } = await registerUser("runs@test.com");
+      const create = await agent
+        .post("/api/projects")
+        .send({ name: "RunsProject", prompt: "test app", framework: "swiftui" });
+      const res = await agent.get(`/api/projects/${create.body.id}/runs`);
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([]);
+    });
+
+    it("returns 404 for nonexistent project", async () => {
+      const { agent } = await registerUser("runs2@test.com");
+      const res = await agent.get("/api/projects/99999/runs");
+      expect(res.status).toBe(404);
+    });
+
+    it("returns 404 when accessing another user project", async () => {
+      const { agent: agent1 } = await registerUser("owner2@test.com");
+      const create = await agent1
+        .post("/api/projects")
+        .send({ name: "Private2", prompt: "private app", framework: "swiftui" });
+
+      const { agent: agent2 } = await registerUser("other2@test.com");
+      const res = await agent2.get(`/api/projects/${create.body.id}/runs`);
+      expect(res.status).toBe(404);
+    });
+  });
+});

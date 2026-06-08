@@ -4,7 +4,8 @@ import { requireAuth } from "../middleware/auth";
 import { generationLimiter } from "../middleware/rate-limit";
 import { validateBody } from "../middleware/validate";
 import { refineSchema } from "../lib/request-schemas";
-import { callWithFallback, resolveProvider, DEFAULT_MODELS, FALLBACK_MODELS, type Provider } from "../lib/ai-client";
+import { callWithFallback, resolveProvider, DEFAULT_MODELS, FALLBACK_MODELS } from "../lib/ai-client";
+import { recordProjectRevision } from "../lib/generation-history";
 
 const router: IRouter = Router();
 
@@ -202,6 +203,15 @@ Return ONLY the JSON with modified/new files and a summary.`;
       content: summary,
       filesChanged: changedPaths.length > 0 ? changedPaths : null,
     });
+
+    // Record refinement revision for audit trail
+    recordProjectRevision({
+      projectId,
+      userId: req.user?.id,
+      revisionType: "refinement",
+      payload: { filesChanged: changedPaths, summary },
+      message: instruction,
+    }).catch(() => { /* non-fatal */ });
 
     res.json({
       summary,
