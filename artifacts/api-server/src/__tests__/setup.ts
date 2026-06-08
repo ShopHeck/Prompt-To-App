@@ -52,6 +52,7 @@ beforeAll(async () => {
 });
 
 afterEach(async () => {
+  await pool.query("DELETE FROM rate_limit_hits");
   await pool.query("DELETE FROM generation_runs");
   await pool.query("DELETE FROM project_revisions");
   await pool.query("DELETE FROM refinement_messages");
@@ -66,6 +67,7 @@ afterEach(async () => {
   await pool.query("ALTER SEQUENCE refinement_messages_id_seq RESTART WITH 1");
   await pool.query("ALTER SEQUENCE generation_runs_id_seq RESTART WITH 1");
   await pool.query("ALTER SEQUENCE project_revisions_id_seq RESTART WITH 1");
+  await pool.query("ALTER SEQUENCE rate_limit_hits_id_seq RESTART WITH 1");
 });
 
 afterAll(async () => {
