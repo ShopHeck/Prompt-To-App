@@ -2,7 +2,7 @@
   "id": "FEAT-002",
   "type": "fix",
   "description": "P1 Production Hardening - Pagination, indexes, Docker optimization, SSE keepalive, and cleanup",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "1. Add pagination to GET /projects in artifacts/api-server/src/routes/projects.ts: accept ?page=1&limit=20 query params (default page=1, limit=20, max limit=100). Return { data: [...], pagination: { page, limit, total, totalPages } }. Update GET /projects/recent to use limit param.",
     "2. Create a new migration file lib/db/migrations/0007_add_indexes.sql: CREATE INDEX idx_projects_user_id ON projects(user_id); CREATE INDEX idx_projects_status ON projects(status); CREATE INDEX idx_projects_updated_at ON projects(updated_at DESC); -- sessions.expires_at already has index from migration 0005",
@@ -33,5 +33,5 @@
     "docker build --target production -t prompt-to-app:test ."
   ],
   "blocked_reason": null,
-  "findings": ""
+  "findings": "All 60 tests pass. Build and typecheck succeed. Docker image builds successfully (all 4 stages). Postgres in sandbox requires: chmod 1777 /dev/shm, logging_collector=off in postgresql.conf, setsid to keep process alive, and unix_socket_directories=/var/run/postgresql only (no /tmp). Migration 0007 uses IF NOT EXISTS to be idempotent since the test setup runs all migrations on each test run. Pinned pnpm to 10.28.1 in Dockerfile because node:24-slim ships pnpm 11 via corepack which has incompatible build-script approval behavior."
 }
