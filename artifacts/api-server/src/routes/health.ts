@@ -2,7 +2,8 @@ import { Router, type IRouter } from "express";
 import { HealthCheckResponse } from "@workspace/api-zod";
 import { db, sql } from "@workspace/db";
 import { isEnabled as isSentryEnabled } from "../lib/sentry";
-import { metricsSnapshot } from "../middleware/metrics";
+import { metricsSnapshot, generationMetricsSnapshot } from "../middleware/metrics";
+import { requireAuth } from "../middleware/auth";
 
 const router: IRouter = Router();
 const startedAt = Date.now();
@@ -38,6 +39,14 @@ router.get("/readyz", async (_req, res) => {
       heapUsed: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
       heapTotal: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),
     },
+  });
+});
+
+router.get("/admin/metrics", requireAuth, (_req, res) => {
+  res.json({
+    http: metricsSnapshot(),
+    generation: generationMetricsSnapshot(),
+    uptime: Math.floor((Date.now() - startedAt) / 1000),
   });
 });
 

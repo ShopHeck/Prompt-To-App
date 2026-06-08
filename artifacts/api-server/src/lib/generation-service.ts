@@ -17,6 +17,7 @@ import { normalizeIosProject } from "./xcode-scaffold";
 import { evaluateQuality, type QualityReport } from "./quality-scorer";
 import { recordGenerationRun, recordProjectRevision } from "./generation-history";
 import { incrementUsage } from "../middleware/quota";
+import { recordGenerationMetric } from "../middleware/metrics";
 import { IOS_QUALITY_STANDARDS } from "./ios-quality-standards";
 import { PATTERN_MENU } from "./component-library";
 import { getStylePreset } from "./style-presets";
@@ -189,6 +190,9 @@ Produce the JSON architecture plan now.`;
     const target = resolveTargetFromFramework(project.framework);
     const generator = getGenerator(target);
 
+    // Record generation start metric
+    recordGenerationMetric("started", 0, 0, provider, "");
+
     // Validate the plan against the generator
     const validationErrors = generator.validate(approvedPlan);
     if (validationErrors.length > 0) {
@@ -217,6 +221,7 @@ Produce the JSON architecture plan now.`;
     } catch (genErr) {
       const message = genErr instanceof Error ? genErr.message : "unknown generation error";
       reqLog.error({ genErr: message, target }, "Generator failed");
+      recordGenerationMetric("failed", 0, 0, provider, "");
       await db.update(projectsTable).set({ status: "error" }).where(eq(projectsTable.id, projectId));
       sendEvent({ type: "error", message });
       res.end();
@@ -380,6 +385,9 @@ Produce the JSON architecture plan now.`;
       status: "completed",
       provider,
     }).catch((err) => { logger.error({ err }, "Failed to record generation history"); });
+
+    // Record completed generation metric (token counts from generator if available)
+    recordGenerationMetric("completed", 0, 0, provider, "");
 
     res.end();
   }

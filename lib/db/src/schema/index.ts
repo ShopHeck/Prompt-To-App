@@ -5,3 +5,4 @@ export * from "./refinement_messages";
 export * from "./generation_runs";
 export * from "./project_revisions";
 export * from "./rate_limit_hits";
+export * from "./audit_events";

@@ -3,6 +3,7 @@ import { db, usersTable, eq } from "@workspace/db";
 import { requireAuth } from "../middleware/auth";
 import { validateBody } from "../middleware/validate";
 import { checkoutSchema } from "../lib/request-schemas";
+import { auditLog } from "../lib/audit-log";
 import crypto from "node:crypto";
 
 const router: IRouter = Router();
@@ -249,6 +250,8 @@ router.post("/billing/webhook", async (req, res) => {
             currentPeriodEnd: new Date((sub.current_period_end as number) * 1000),
           })
           .where(eq(usersTable.id, userId));
+
+        auditLog({ userId, action: "billing_subscription_change", metadata: { event: "checkout.session.completed", plan, subscriptionId } });
         break;
       }
 
@@ -266,6 +269,8 @@ router.post("/billing/webhook", async (req, res) => {
             currentPeriodEnd: new Date((data.current_period_end as number) * 1000),
           })
           .where(eq(usersTable.id, userId));
+
+        auditLog({ userId, action: "billing_subscription_change", metadata: { event: "customer.subscription.updated", plan, status: data.status } });
         break;
       }
 
@@ -280,6 +285,8 @@ router.post("/billing/webhook", async (req, res) => {
             subscriptionStatus: "canceled",
           })
           .where(eq(usersTable.id, userId));
+
+        auditLog({ userId, action: "billing_subscription_change", metadata: { event: "customer.subscription.deleted" } });
         break;
       }
 
