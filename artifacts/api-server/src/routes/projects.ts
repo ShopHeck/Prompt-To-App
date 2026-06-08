@@ -28,6 +28,7 @@ import {
   getAvailableProviders,
   DEFAULT_MODELS,
 } from "../lib/ai-client";
+import { sseSessionManager } from "../lib/sse-session";
 import { EXAMPLE_PROMPTS } from "../lib/prompt-templates";
 import { generationLimiter } from "../middleware/rate-limit";
 import { enforceQuota } from "../middleware/quota";
@@ -102,17 +103,39 @@ async function checkProjectAccess(
 }
 
 /** Sets up SSE headers + heartbeat. Returns sendEvent helper and cleanup. */
-function setupSSE(res: Response) {
+function setupSSE(res: Response, opts?: { sessionId?: string; req?: Request }) {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders();
 
+  const sessionId = opts?.sessionId;
+
+  // If we have a session and a Last-Event-ID, replay missed events
+  if (sessionId && opts?.req) {
+    const lastEventIdHeader = opts.req.headers["last-event-id"];
+    if (lastEventIdHeader) {
+      const lastId = parseInt(lastEventIdHeader as string, 10);
+      if (!isNaN(lastId)) {
+        const missed = sseSessionManager.getEventsSince(sessionId, lastId);
+        for (const event of missed) {
+          res.write(`id: ${event.id}\ndata: ${JSON.stringify(event.data)}\n\n`);
+        }
+      }
+    }
+    sseSessionManager.getOrCreateSession(sessionId);
+  }
+
   const heartbeatInterval = setInterval(() => { res.write(`: heartbeat\n\n`); }, 15000);
   res.on("close", () => { clearInterval(heartbeatInterval); });
 
   const sendEvent = (data: object) => {
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
+    if (sessionId) {
+      const eventId = sseSessionManager.pushEvent(sessionId, data);
+      res.write(`id: ${eventId}\ndata: ${JSON.stringify(data)}\n\n`);
+    } else {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    }
   };
   return sendEvent;
 }
@@ -451,7 +474,8 @@ router.post("/projects/:id/generate", generationLimiter, enforceQuota, async (re
   const additionalContext = body.success ? body.data.additionalContext ?? null : null;
   const provider = resolveProvider((req.query as Record<string, string>).provider);
 
-  const sendEvent = setupSSE(res);
+  const sessionId = `gen-${id}-${Date.now()}`;
+  const sendEvent = setupSSE(res, { sessionId, req });
 
   try {
     const [project] = await db
@@ -486,6 +510,7 @@ router.post("/projects/:id/generate", generationLimiter, enforceQuota, async (re
       .set({ status: "generating" })
       .where(eq(projectsTable.id, id));
     sendEvent({ type: "status", status: "generating" });
+    sendEvent({ type: "session", sessionId });
 
     // Record a job for crash recovery before starting generation
     const job = await jobQueue.enqueue({
@@ -564,7 +589,8 @@ router.post("/projects/:id/answer-clarifications", async (req, res) => {
   }
 
   const { answers, additionalContext, skip } = body.data;
-  const sendEvent = setupSSE(res);
+  const sessionId = `clarify-${id}-${Date.now()}`;
+  const sendEvent = setupSSE(res, { sessionId, req });
 
   try {
     const [project] = await db
@@ -633,7 +659,8 @@ router.post("/projects/:id/approve-plan", generationLimiter, enforceQuota, async
 
   const { plan: approvedPlan, additionalContext } = body.data;
   const provider = resolveProvider((req.query as Record<string, string>).provider);
-  const sendEvent = setupSSE(res);
+  const sessionId = `approve-${id}-${Date.now()}`;
+  const sendEvent = setupSSE(res, { sessionId, req });
 
   try {
     const [project] = await db

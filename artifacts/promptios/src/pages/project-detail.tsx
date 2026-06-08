@@ -26,6 +26,8 @@ import { useToast } from "@/hooks/use-toast";
 import { PlanPanel, parsePartialPlan, type ArchitecturePlan, type PartialPlan } from "@/components/plan-panel";
 import { ClarifyPanel, ClarifyAnswersDisplay, type ClarifyingQuestion, type ClarifyAnswer } from "@/components/clarify-panel";
 import { AccuracyReportPanel, type AccuracyReport, type RepairHistoryEntry } from "@/components/accuracy-report-panel";
+import { SSEClient, type SSEConnectionState } from "@/lib/sse-client";
+import { SSEStatus } from "@/components/sse-status";
 import { BuildTerminal, type LogKind, type LogLine } from "@/components/build-terminal";
 import { Terminal as TerminalIcon } from "lucide-react";
 
@@ -211,16 +213,33 @@ export default function ProjectDetail() {
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split("\n");
       buffer = lines.pop() ?? "";
+      let currentId: string | null = null;
       for (const line of lines) {
-        if (line.trim().startsWith("data: ")) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("id: ")) {
+          currentId = trimmed.slice(4);
+          continue;
+        }
+        if (trimmed.startsWith("data: ")) {
           try {
-            const event = JSON.parse(line.trim().slice(6));
+            const event = JSON.parse(trimmed.slice(6));
             onEvent(event);
           } catch (_) {}
         }
       }
     }
   };
+
+  // SSE connection state for status indicator
+  const [sseState, setSseState] = useState<SSEConnectionState>("disconnected");
+  const sseClientRef = useRef<SSEClient | null>(null);
+
+  // Cleanup SSE client on unmount
+  useEffect(() => {
+    return () => {
+      sseClientRef.current?.close();
+    };
+  }, []);
 
   const handleGenerate = async () => {
     if (!projectId || isGenerating) return;
@@ -246,16 +265,17 @@ export default function ProjectDetail() {
     );
 
     try {
-      const response = await fetch(`/api/projects/${projectId}/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ additionalContext: null }),
-      });
-      
-      if (!response.ok) throw new Error("Generation request failed");
+      // Close any existing SSE client
+      sseClientRef.current?.close();
 
       let planChunkSeen = false;
-      await consumeSseStream(response, (event) => {
+      await new Promise<void>((resolve, reject) => {
+        const client = new SSEClient({
+          url: `/api/projects/${projectId}/generate`,
+          method: "POST",
+          body: JSON.stringify({ additionalContext: null }),
+          headers: { "Content-Type": "application/json" },
+          onEvent: (event: any) => {
         if (event.type === "clarify_check") {
           appendLog("clarify", "Inspecting prompt for ambiguity…");
         } else if (event.type === "clarify_questions") {
@@ -306,6 +326,24 @@ export default function ProjectDetail() {
           });
           queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
         }
+          },
+          onStateChange: (state) => {
+            setSseState(state);
+            if (state === "reconnecting") {
+              appendLog("info", "Connection lost, reconnecting...");
+            }
+            if (state === "disconnected") {
+              resolve();
+            }
+          },
+          onError: (err) => {
+            reject(err);
+          },
+          maxRetries: 5,
+        });
+
+        sseClientRef.current = client;
+        client.connect();
       });
     } catch (error) {
       setGenerationPhase("idle");
@@ -317,6 +355,7 @@ export default function ProjectDetail() {
       queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
     } finally {
       setIsGenerating(false);
+      sseClientRef.current = null;
     }
   };
 
@@ -339,16 +378,17 @@ export default function ProjectDetail() {
     );
 
     try {
-      const response = await fetch(`/api/projects/${projectId}/approve-plan`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan: planToSend, additionalContext: null }),
-      });
-
-      if (!response.ok) throw new Error("Approve plan request failed");
+      // Close any existing SSE client
+      sseClientRef.current?.close();
 
       let progressLogged = false;
-      await consumeSseStream(response, (event) => {
+      await new Promise<void>((resolve, reject) => {
+        const client = new SSEClient({
+          url: `/api/projects/${projectId}/approve-plan`,
+          method: "POST",
+          body: JSON.stringify({ plan: planToSend, additionalContext: null }),
+          headers: { "Content-Type": "application/json" },
+          onEvent: (event: any) => {
         if (event.type === "building") {
           setGenerationPhase("building");
           appendLog("build", "Synthesizing source code…");
@@ -432,6 +472,24 @@ export default function ProjectDetail() {
           });
           queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
         }
+          },
+          onStateChange: (state) => {
+            setSseState(state);
+            if (state === "reconnecting") {
+              appendLog("info", "Connection lost, reconnecting...");
+            }
+            if (state === "disconnected") {
+              resolve();
+            }
+          },
+          onError: (err) => {
+            reject(err);
+          },
+          maxRetries: 5,
+        });
+
+        sseClientRef.current = client;
+        client.connect();
       });
     } catch (error) {
       setGenerationPhase("idle");
@@ -443,6 +501,7 @@ export default function ProjectDetail() {
       queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
     } finally {
       setIsGenerating(false);
+      sseClientRef.current = null;
     }
   };
 
@@ -468,15 +527,17 @@ export default function ProjectDetail() {
     );
 
     try {
-      const response = await fetch(`/api/projects/${projectId}/answer-clarifications`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ skip, answers, additionalContext: null }),
-      });
-      if (!response.ok) throw new Error("Answer submission failed");
+      // Close any existing SSE client
+      sseClientRef.current?.close();
 
       let planChunkSeen = false;
-      await consumeSseStream(response, (event) => {
+      await new Promise<void>((resolve, reject) => {
+        const client = new SSEClient({
+          url: `/api/projects/${projectId}/answer-clarifications`,
+          method: "POST",
+          body: JSON.stringify({ skip, answers, additionalContext: null }),
+          headers: { "Content-Type": "application/json" },
+          onEvent: (event: any) => {
         if (event.type === "planning") {
           setGenerationPhase("planning");
           appendLog("plan", "Architect drafting blueprint…");
@@ -515,6 +576,24 @@ export default function ProjectDetail() {
           });
           queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
         }
+          },
+          onStateChange: (state) => {
+            setSseState(state);
+            if (state === "reconnecting") {
+              appendLog("info", "Connection lost, reconnecting...");
+            }
+            if (state === "disconnected") {
+              resolve();
+            }
+          },
+          onError: (err) => {
+            reject(err);
+          },
+          maxRetries: 5,
+        });
+
+        sseClientRef.current = client;
+        client.connect();
       });
     } catch (error) {
       setGenerationPhase("idle");
@@ -526,6 +605,7 @@ export default function ProjectDetail() {
       queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
     } finally {
       setIsGenerating(false);
+      sseClientRef.current = null;
     }
   };
 
@@ -998,6 +1078,7 @@ export default function ProjectDetail() {
             {/* Generation overlay — live terminal of agent thoughts */}
             {(isActivelyGenerating || (terminalLines.length > 0 && !terminalDismissed)) && (
               <div className="absolute inset-0 z-20 flex flex-col bg-background/85 backdrop-blur-sm p-3 sm:p-4 md:p-6">
+                <SSEStatus state={sseState} className="mb-2 self-end" />
                 <BuildTerminal
                   lines={terminalLines}
                   active={isActivelyGenerating}
