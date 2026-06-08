@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Request, type Response } from "express";
-import { db, projectsTable, projectFilesTable, eq, desc, count, sum } from "@workspace/db";
+import { db, projectsTable, projectFilesTable, eq, and, desc, count, sum } from "@workspace/db";
 import JSZip from "jszip";
 import { z } from "zod";
 import {
@@ -203,6 +203,51 @@ router.get("/projects/:id/files", async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "Failed to get project files");
     res.status(500).json({ error: "Failed to get project files" });
+  }
+});
+
+const UpdateFileBody = z.object({
+  content: z.string().max(512000, "Content must be 500KB or fewer"),
+});
+
+router.put("/projects/:id/files/:fileId", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const fileId = parseInt(req.params.fileId, 10);
+    if (isNaN(id) || isNaN(fileId)) {
+      res.status(400).json({ error: "Invalid id" });
+      return;
+    }
+
+    const [project] = await db
+      .select()
+      .from(projectsTable)
+      .where(eq(projectsTable.id, id));
+    if (!project) { res.status(404).json({ error: "Project not found" }); return; }
+    if (!checkOwnership(project, req, res)) return;
+
+    const body = UpdateFileBody.parse(req.body);
+
+    const [file] = await db
+      .select()
+      .from(projectFilesTable)
+      .where(and(eq(projectFilesTable.id, fileId), eq(projectFilesTable.projectId, id)));
+    if (!file) { res.status(404).json({ error: "File not found" }); return; }
+
+    const [updated] = await db
+      .update(projectFilesTable)
+      .set({ content: body.content })
+      .where(eq(projectFilesTable.id, fileId))
+      .returning();
+
+    res.json(updated);
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      res.status(400).json({ error: "Invalid request body", details: err.issues });
+      return;
+    }
+    req.log.error({ err }, "Failed to update file");
+    res.status(500).json({ error: "Failed to update file" });
   }
 });
 

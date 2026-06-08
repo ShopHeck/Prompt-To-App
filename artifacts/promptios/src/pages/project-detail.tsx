@@ -6,23 +6,23 @@ import {
   useGetProject, 
   getGetProjectQueryKey,
   useGetProjectFiles,
-  getGetProjectFilesQueryKey
+  getGetProjectFilesQueryKey,
+  useUpdateProjectFile
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  FileCode, Play, RotateCw, AlertTriangle, File, CheckCircle2,
-  Copy, Download, Code2, Cpu, Share2, Check, Layers, Hammer, PencilLine,
+  FileCode, Play, RotateCw, AlertTriangle, CheckCircle2,
+  Download, Code2, Cpu, Share2, Check, Layers, Hammer, PencilLine,
   FolderTree, Smartphone, ArrowUpRight, MessageSquare
 } from "lucide-react";
 import { Link } from "wouter";
 import { PhonePreview } from "@/components/phone-preview";
 import { RefinementChat } from "@/components/refinement-chat";
+import { CodeEditor } from "@/components/code-editor";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle, SheetClose } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { PlanPanel, parsePartialPlan, type ArchitecturePlan, type PartialPlan } from "@/components/plan-panel";
 import { ClarifyPanel, ClarifyAnswersDisplay, type ClarifyingQuestion, type ClarifyAnswer } from "@/components/clarify-panel";
 import { AccuracyReportPanel, type AccuracyReport, type RepairHistoryEntry } from "@/components/accuracy-report-panel";
@@ -186,6 +186,18 @@ export default function ProjectDetail() {
       enabled: !!projectId,
       queryKey: getGetProjectFilesQueryKey(projectId)
     }
+  });
+
+  const updateFileMutation = useUpdateProjectFile({
+    mutation: {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: getGetProjectFilesQueryKey(projectId) });
+        toast({ title: "File saved", description: "Changes saved successfully." });
+      },
+      onError: () => {
+        toast({ title: "Save failed", description: "Could not save file changes.", variant: "destructive" });
+      },
+    },
   });
 
   const consumeSseStream = async (response: Response, onEvent: (event: any) => void) => {
@@ -620,16 +632,6 @@ export default function ProjectDetail() {
     }
   };
 
-  const copyToClipboard = () => {
-    if (selectedFile?.content) {
-      navigator.clipboard.writeText(selectedFile.content);
-      toast({
-        title: "Copied to clipboard",
-        description: `${selectedFile.filename} copied.`,
-      });
-    }
-  };
-
   if (projectError) {
     return (
       <Layout>
@@ -1021,39 +1023,22 @@ export default function ProjectDetail() {
             )}
 
             {selectedFile ? (
-              <>
-                <div className="h-10 bg-background/80 border-b border-border/40 flex items-center px-4 justify-between shrink-0">
-                  <div className="flex items-center gap-2 text-sm font-mono text-muted-foreground">
-                    <File className="h-3.5 w-3.5" />
-                    <span>{selectedFile.filepath}</span>
-                  </div>
-                  <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground" onClick={copyToClipboard} title="Copy code">
-                    <Copy className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-                <div className="flex-1 overflow-auto bg-[#1E1E1E]">
-                  <SyntaxHighlighter
-                    language={selectedFile.language === 'swift' ? 'swift' : selectedFile.filename.endsWith('.plist') ? 'xml' : selectedFile.filename.endsWith('.md') ? 'markdown' : 'typescript'}
-                    style={vscDarkPlus}
-                    customStyle={{
-                      margin: 0,
-                      padding: '1rem',
-                      background: 'transparent',
-                      fontSize: '13px',
-                      lineHeight: '1.5',
-                    }}
-                    showLineNumbers
-                    lineNumberStyle={{
-                      minWidth: '2.5em',
-                      paddingRight: '1em',
-                      color: '#6e7681',
-                      textAlign: 'right'
-                    }}
-                  >
-                    {selectedFile.content}
-                  </SyntaxHighlighter>
-                </div>
-              </>
+              <div className="flex-1 flex flex-col overflow-hidden bg-[#1E1E1E]">
+                <CodeEditor
+                  filename={selectedFile.filename}
+                  filepath={selectedFile.filepath}
+                  content={selectedFile.content}
+                  readOnly={!project}
+                  isSaving={updateFileMutation.isPending}
+                  onSave={(newContent) => {
+                    updateFileMutation.mutate({
+                      id: projectId,
+                      fileId: selectedFile.id,
+                      data: { content: newContent },
+                    });
+                  }}
+                />
+              </div>
             ) : !isActivelyGenerating ? (
               <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-8 text-center bg-background">
                 <Code2 className="h-16 w-16 opacity-20 mb-4" />

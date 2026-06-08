@@ -389,6 +389,40 @@ paths:
                 items:
                   $ref: "#/components/schemas/ProjectFile"
 
+  /projects/{id}/files/{fileId}:
+    put:
+      operationId: updateProjectFile
+      tags: [projects]
+      summary: Update the content of a project file
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: fileId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateFileBody"
+      responses:
+        "200":
+          description: Updated file
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectFile"
+        "400":
+          description: Invalid request body
+        "404":
+          description: Project or file not found
+
   /projects/{id}/share:
     post:
       operationId: shareProject
@@ -784,6 +818,15 @@ components:
         - content
         - language
         - createdAt
+
+    UpdateFileBody:
+      type: object
+      properties:
+        content:
+          type: string
+          maxLength: 512000
+      required:
+        - content
 
     GenerateAppBody:
       type: object
