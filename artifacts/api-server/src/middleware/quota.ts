@@ -57,11 +57,6 @@ export async function getQuota(userId: number): Promise<QuotaInfo> {
 }
 
 export async function incrementUsage(userId: number): Promise<void> {
-  await db
-    .update(usersTable)
-    .set({ monthlyGenerations: usersTable.monthlyGenerations })
-    .where(eq(usersTable.id, userId));
-
   // Use raw SQL for atomic increment
   const { pool } = await import("@workspace/db");
   await pool.query(

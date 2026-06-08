@@ -190,6 +190,11 @@ async function verifyStripeSignature(body: string, signature: string, secret: st
   const sig = parts["v1"];
   if (!timestamp || !sig) return false;
 
+  // Reject replayed events older than 5 minutes
+  const tolerance = 300; // seconds
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - Number(timestamp)) > tolerance) return false;
+
   const payload = `${timestamp}.${body}`;
   const hmac = crypto.createHmac("sha256", secret);
   hmac.update(payload);

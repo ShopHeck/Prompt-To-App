@@ -1,8 +1,9 @@
 import { Router, type IRouter, type Response } from "express";
 import { db, projectsTable, projectFilesTable, eq, desc, count, sum } from "@workspace/db";
 import JSZip from "jszip";
+import { z } from "zod";
 import {
-  CreateProjectBody,
+  CreateProjectBody as CreateProjectBodyBase,
   GetProjectParams,
   DeleteProjectParams,
   GetProjectFilesParams,
@@ -13,6 +14,13 @@ import {
   AnswerClarificationsParams,
   AnswerClarificationsBody,
 } from "@workspace/api-zod";
+
+const PROMPT_MAX_LENGTH = 10000;
+
+const CreateProjectBody = CreateProjectBodyBase.extend({
+  prompt: z.string().max(PROMPT_MAX_LENGTH, `Prompt must be ${PROMPT_MAX_LENGTH} characters or fewer`),
+  name: z.string().max(200, "Name must be 200 characters or fewer"),
+});
 import { IOS_QUALITY_STANDARDS } from "../lib/ios-quality-standards";
 import { normalizeIosProject } from "../lib/xcode-scaffold";
 import {
@@ -64,9 +72,14 @@ router.get("/templates", (_req, res) => {
 
 router.get("/projects", async (req, res) => {
   try {
+    if (!req.user) {
+      res.json([]);
+      return;
+    }
     const projects = await db
       .select()
       .from(projectsTable)
+      .where(eq(projectsTable.userId, req.user.id))
       .orderBy(desc(projectsTable.updatedAt));
     res.json(projects);
   } catch (err) {
@@ -98,9 +111,14 @@ router.post("/projects", async (req, res) => {
 
 router.get("/projects/recent", async (req, res) => {
   try {
+    if (!req.user) {
+      res.json([]);
+      return;
+    }
     const projects = await db
       .select()
       .from(projectsTable)
+      .where(eq(projectsTable.userId, req.user.id))
       .orderBy(desc(projectsTable.updatedAt))
       .limit(5);
     res.json(projects);
@@ -158,6 +176,14 @@ router.get("/projects/:id", async (req, res) => {
       .from(projectsTable)
       .where(eq(projectsTable.id, id));
     if (!project) { res.status(404).json({ error: "Project not found" }); return; }
+    // Ownership check: only the owner can access, or unauthenticated projects with no owner
+    if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
+      res.status(404).json({ error: "Project not found" }); return;
+    }
+    if (project.userId === null && req.user) {
+      // Authenticated users cannot access ownerless projects directly (use share token)
+      res.status(404).json({ error: "Project not found" }); return;
+    }
     res.json(project);
   } catch (err) {
     req.log.error({ err }, "Failed to get project");
@@ -168,6 +194,17 @@ router.get("/projects/:id", async (req, res) => {
 router.delete("/projects/:id", async (req, res) => {
   try {
     const { id } = DeleteProjectParams.parse(req.params);
+    const [project] = await db
+      .select()
+      .from(projectsTable)
+      .where(eq(projectsTable.id, id));
+    if (!project) { res.status(404).json({ error: "Project not found" }); return; }
+    if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
+      res.status(404).json({ error: "Project not found" }); return;
+    }
+    if (project.userId === null && req.user) {
+      res.status(404).json({ error: "Project not found" }); return;
+    }
     await db.delete(projectsTable).where(eq(projectsTable.id, id));
     res.status(204).send();
   } catch (err) {
@@ -179,6 +216,17 @@ router.delete("/projects/:id", async (req, res) => {
 router.get("/projects/:id/files", async (req, res) => {
   try {
     const { id } = GetProjectFilesParams.parse(req.params);
+    const [project] = await db
+      .select()
+      .from(projectsTable)
+      .where(eq(projectsTable.id, id));
+    if (!project) { res.status(404).json({ error: "Project not found" }); return; }
+    if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
+      res.status(404).json({ error: "Project not found" }); return;
+    }
+    if (project.userId === null && req.user) {
+      res.status(404).json({ error: "Project not found" }); return;
+    }
     const files = await db
       .select()
       .from(projectFilesTable)
@@ -202,6 +250,12 @@ router.post("/projects/:id/share", async (req, res) => {
       .where(eq(projectsTable.id, id));
 
     if (!project) { res.status(404).json({ error: "Project not found" }); return; }
+    if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
+      res.status(404).json({ error: "Project not found" }); return;
+    }
+    if (project.userId === null && req.user) {
+      res.status(404).json({ error: "Project not found" }); return;
+    }
 
     let token = project.shareToken;
     if (!token) {
@@ -278,7 +332,19 @@ router.get("/projects/:id/preview", async (req, res) => {
       return;
     }
     const [project] = await db.select().from(projectsTable).where(eq(projectsTable.id, id)).limit(1);
-    if (!project || !project.livePreviewHtml) {
+    if (!project) {
+      res.status(404).type("text/html").send("<!doctype html><meta charset=utf-8><title>No preview</title><body style=\"font-family:-apple-system,sans-serif;background:#000;color:#888;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;padding:1rem;font-size:13px;\">Preview not yet available.</body>");
+      return;
+    }
+    if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
+      res.status(404).type("text/html").send("<!doctype html><meta charset=utf-8><title>No preview</title><body style=\"font-family:-apple-system,sans-serif;background:#000;color:#888;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;padding:1rem;font-size:13px;\">Preview not yet available.</body>");
+      return;
+    }
+    if (project.userId === null && req.user) {
+      res.status(404).type("text/html").send("<!doctype html><meta charset=utf-8><title>No preview</title><body style=\"font-family:-apple-system,sans-serif;background:#000;color:#888;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;padding:1rem;font-size:13px;\">Preview not yet available.</body>");
+      return;
+    }
+    if (!project.livePreviewHtml) {
       res.status(404).type("text/html").send("<!doctype html><meta charset=utf-8><title>No preview</title><body style=\"font-family:-apple-system,sans-serif;background:#000;color:#888;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;padding:1rem;font-size:13px;\">Preview not yet available.</body>");
       return;
     }
@@ -315,6 +381,12 @@ router.get("/projects/:id/download", async (req, res) => {
       .where(eq(projectsTable.id, id));
 
     if (!project) { res.status(404).json({ error: "Project not found" }); return; }
+    if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
+      res.status(404).json({ error: "Project not found" }); return;
+    }
+    if (project.userId === null && req.user) {
+      res.status(404).json({ error: "Project not found" }); return;
+    }
 
     const files = await db
       .select()
@@ -526,6 +598,18 @@ router.post("/projects/:id/generate", generationLimiter, enforceQuota, async (re
       .where(eq(projectsTable.id, id));
 
     if (!project) {
+      sendEvent({ error: "Project not found" });
+      res.end();
+      return;
+    }
+
+    // Ownership check
+    if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
+      sendEvent({ error: "Project not found" });
+      res.end();
+      return;
+    }
+    if (project.userId === null && req.user) {
       sendEvent({ error: "Project not found" });
       res.end();
       return;

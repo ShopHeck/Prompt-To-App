@@ -26,5 +26,6 @@ export const refineSchema = z.object({
   instruction: z
     .string()
     .trim()
-    .min(1, "Instruction is required"),
+    .min(1, "Instruction is required")
+    .max(10000, "Instruction must be 10000 characters or fewer"),
 });
