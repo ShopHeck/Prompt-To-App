@@ -1,4 +1,4 @@
-import express, { type Express } from "express";
+import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import pinoHttp from "pino-http";
@@ -35,19 +35,8 @@ app.use(
     },
   }),
 );
-app.use(cors({ origin: corsOrigin, credentials: true }));
-app.use(cookieParser());
-// Raw body for Stripe webhook signature verification
-app.use("/api/billing/webhook", express.raw({ type: "application/json" }));
-// Higher body limit for visual-feedback endpoint (base64 screenshots up to ~5MB)
-app.use("/api/projects/:id/visual-feedback", express.json({ limit: "5mb" }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use(csrfProtection);
-app.use(authMiddleware);
-app.use("/api", apiLimiter, router);
 
-// Serve frontend static files in production
+// Serve frontend static files in production (before CORS and auth)
 const publicDir = path.resolve(import.meta.dirname, "..", "public");
 if (fs.existsSync(publicDir)) {
   app.use(express.static(publicDir, {
@@ -64,12 +53,30 @@ if (fs.existsSync(publicDir)) {
       }
     },
   }));
-  app.get("/{*splat}", (_req, res) => {
-    res.setHeader("Cache-Control", "public, max-age=300, s-maxage=600, stale-while-revalidate=86400");
-    res.setHeader("Surrogate-Control", "max-age=600");
-    res.sendFile(path.join(publicDir, "index.html"));
+  // SPA catch-all for client-side routing (serves index.html for non-file routes)
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    // Only handle GET requests that don't start with /api
+    if (req.method === "GET" && !req.path.startsWith("/api")) {
+      res.setHeader("Cache-Control", "public, max-age=300, s-maxage=600, stale-while-revalidate=86400");
+      res.setHeader("Surrogate-Control", "max-age=600");
+      res.sendFile(path.join(publicDir, "index.html"));
+    } else {
+      next();
+    }
   });
 }
+
+app.use(cors({ origin: corsOrigin, credentials: true }));
+app.use(cookieParser());
+// Raw body for Stripe webhook signature verification
+app.use("/api/billing/webhook", express.raw({ type: "application/json" }));
+// Higher body limit for visual-feedback endpoint (base64 screenshots up to ~5MB)
+app.use("/api/projects/:id/visual-feedback", express.json({ limit: "5mb" }));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(csrfProtection);
+app.use(authMiddleware);
+app.use("/api", apiLimiter, router);
 
 app.use(errorHandler);
 
