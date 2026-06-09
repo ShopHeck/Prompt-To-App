@@ -194,7 +194,15 @@ router.get("/providers", (_req, res) => {
 
 // ── Prompt templates route ───────────────────────────────────────────────────
 router.get("/templates", (_req, res) => {
-  res.json(EXAMPLE_PROMPTS);
+  res.json({
+    templates: EXAMPLE_PROMPTS.map((t) => ({
+      id: t.id,
+      name: t.name,
+      category: t.category,
+      prompt: t.prompt,
+      icon: t.emoji,
+    })),
+  });
 });
 
 // ── CRUD routes ─────────────────────────────────────────────────────────────

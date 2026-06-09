@@ -1,5 +1,6 @@
 export interface PromptTemplate {
-  label: string;
+  id: string;
+  name: string;
   category: string;
   tagline: string;
   signature: string;
@@ -10,345 +11,199 @@ export interface PromptTemplate {
 }
 
 export const EXAMPLE_PROMPTS: PromptTemplate[] = [
-  // ───── For Creators (5) ─────
+  // ───── Productivity (2) ─────
   {
-    category: "Creator",
-    label: "Sponsorship rate card",
-    tagline: "Know your worth. Price your content.",
-    signature: "Auto-calculated CPM from real engagement data.",
-    screens: ["Dashboard", "Rate card", "Deal tracker", "Media kit"],
-    accent: "#FF6B35",
-    emoji: "💰",
+    id: "habit-streak-tracker",
+    name: "Habit Streak Tracker",
+    category: "Productivity",
+    tagline: "Build lasting habits with visual streak motivation.",
+    signature: "Calendar heatmap with streak freeze tokens and milestone celebrations.",
+    screens: ["Today", "Habit Detail", "Calendar Heatmap", "Milestones"],
+    accent: "#30D158",
+    emoji: "🔥",
     prompt:
-      "A creator monetization app. Manually log follower counts and engagement rates per platform (YouTube, TikTok, Instagram, X). Auto-calculates CPM and cost-per-engagement. Generates a shareable media kit as a branded PDF via ShareLink. Tracks inbound brand deal inquiries with status pipeline (pitched → negotiating → contracted → delivered → paid). Swift Charts show earnings over time. Lock Screen widget shows this month's deal revenue.",
+      "A daily habit tracker that motivates users through streak counting and visual progress. The main screen shows today's habits as a checklist with one-tap completion; each habit displays its current streak count beside an animated flame icon. A full calendar heatmap view (inspired by GitHub contribution graphs) colors each day by completion density using Swift Charts on iOS or a CSS grid on web. Users earn streak freeze tokens (one per 7-day streak) that preserve streaks on missed days without breaking the chain. Milestone celebrations trigger confetti animations and haptic bursts at 7, 30, 60, and 100-day streaks. Data persistence uses SwiftData on iOS with a Habit model (name, icon via SF Symbols, frequency, streak, longestStreak, freezesAvailable) and a CompletionLog model (date, habitId). The web preview uses localStorage with equivalent JSON structures. Navigation is a tab bar: Today, Calendar, Milestones, Settings. The calendar screen supports pinch-to-zoom between week and month views. Settings allow custom reminder notifications via UserNotifications on iOS or the Notifications API on web.",
   },
   {
-    category: "Creator",
-    label: "Content pipeline",
-    tagline: "Idea to published, across every platform.",
-    signature: "Visual Kanban board with voice-captured ideas.",
-    screens: ["Pipeline", "Idea capture", "Batch planner", "Calendar"],
-    accent: "#8B5CF6",
-    emoji: "🎬",
+    id: "voice-memo-transcriber",
+    name: "Voice Memo Transcriber",
+    category: "Productivity",
+    tagline: "Record, transcribe, and search your voice notes.",
+    signature: "AI-powered transcription with tag-based organization.",
+    screens: ["Recordings", "Record", "Transcript View", "Search"],
+    accent: "#007AFF",
+    emoji: "🎙️",
     prompt:
-      "A content production tracker with a drag-and-drop Kanban board: columns for Idea → Scripted → Shot → Edited → Scheduled → Published. Quick-capture ideas via voice (SFSpeechRecognizer) or text from anywhere using a Share Extension. Batch planning calendar shows shoot days vs editing days. Each card tracks platform-specific versions (vertical, horizontal, square). Deadline alerts via UserNotifications. Lock Screen widget shows today's content task.",
-  },
-  {
-    category: "Creator",
-    label: "B-roll vault",
-    tagline: "Tag, search, and reuse your footage library.",
-    signature: "Vision auto-tags clips by scene, mood, and color.",
-    screens: ["Library", "Quick tag", "Search", "Collections"],
-    accent: "#06B6D4",
-    emoji: "🎞",
-    prompt:
-      "A footage library manager for video creators. Import clips from the camera roll, auto-categorize using on-device Vision (indoor/outdoor, people, food, nature, urban). Manual tags for mood, project, and season. Full-text search across tags. Tracks which clips have been used in which projects to avoid repeats. Bulk-tag multiple clips at once. Export selected clips as a collection via ShareLink. SwiftData persistence, filterable grid view.",
-  },
-  {
-    category: "Creator",
-    label: "Collab tracker",
-    tagline: "Never lose a collab in your DMs again.",
-    signature: "Pipeline from pitch to publish with revenue splits.",
-    screens: ["Active collabs", "New collab", "Timeline", "Payouts"],
-    accent: "#EC4899",
-    emoji: "🤝",
-    prompt:
-      "A collaboration management app for creators. Track every collab from first contact through delivery: stages are Pitched → Agreed → Briefed → Filming → Editing → Published. Store collaborator contact info, deadlines, content specs, and revenue splits. Auto-generates a collaboration brief from your inputs. Notification reminders for follow-ups and deadlines. Calendar view shows collab timeline. Swift Charts tracks total collab revenue by month.",
-  },
-  {
-    category: "Creator",
-    label: "Launch countdown",
-    tagline: "Build hype for drops, releases, and premieres.",
-    signature: "Live Activity countdown shared with your audience.",
-    screens: ["Launches", "New launch", "Countdown", "Post scheduler"],
-    accent: "#F59E0B",
-    emoji: "🚀",
-    prompt:
-      "A launch coordination app for musicians, podcasters, and video creators. Create countdown pages for upcoming releases with cover art, description, and links. Live Activity shows real-time countdown on the Dynamic Island. Plan cross-platform posting schedules (auto-reminds you when to post on each platform). Tracks multiple upcoming launches on a timeline. Share countdown links via ShareLink. Lock Screen widget shows days until next drop.",
+      "A voice memo app that records audio and automatically transcribes it using on-device speech recognition. The record screen features a large pulsing microphone button with real-time waveform visualization rendered via SwiftUI Canvas on iOS or the Web Audio API with a canvas element on web. After recording, SFSpeechRecognizer (iOS) or the Web Speech API (web) transcribes the audio into searchable text. Users organize memos into folders and apply color-coded tags (work, personal, idea, meeting). The transcript view shows the full text with timestamp markers that sync playback to specific words when tapped. A powerful search screen lets users find any memo by keyword across all transcriptions with highlighted matches. Data model uses SwiftData with a Memo entity (title, audioFileURL, transcript, tags, folder, duration, createdAt) on iOS and IndexedDB with equivalent fields on web. Navigation uses a sidebar on iPad/web and a tab bar on iPhone: Recordings, Search, Folders, Settings. The UI uses a clean monochrome design with the accent color highlighting active recording state and search matches.",
   },
 
-  // ───── For Business Owners (5) ─────
+  // ───── Utility (2) ─────
   {
-    category: "Business",
-    label: "Cash pulse",
-    tagline: "Daily cash flow in one calm glance.",
-    signature: "Runway forecast with 'danger zone' alerts.",
-    screens: ["Pulse", "Log entry", "Forecast", "Weekly report"],
-    accent: "#10B981",
-    emoji: "💵",
+    id: "split-the-bill",
+    name: "Split the Bill",
+    category: "Utility",
+    tagline: "Smart bill splitting for any group dinner.",
+    signature: "Handles tax, tip, and uneven splits with saved friend groups.",
+    screens: ["Split", "Add Items", "Summary", "Friend Groups"],
+    accent: "#34C759",
+    emoji: "🧾",
     prompt:
-      "A daily cash flow tracker for small business owners. Log income and expenses with one tap — snap receipts with VisionKit DataScanner for auto-extraction. Categorize by type (payroll, materials, subscriptions, revenue, one-time). 30/60/90-day runway forecast using Swift Charts. 'Danger zone' alerts when projected outflows exceed inflows. Weekly cash health report exportable as PDF. Lock Screen widget shows today's net position. SwiftData persistence, Face ID lock.",
+      "A bill-splitting app that handles complex group dining scenarios beyond simple even splits. Users photograph receipts using VisionKit DataScanner on iOS or a file upload on web to auto-extract line items and totals. The add items screen lets users manually enter or edit extracted items, then assign each item to one or more people by tapping avatar circles. Tax and tip are distributed proportionally based on each person's subtotal. The summary screen shows a clear breakdown per person with their items, tax share, and tip share, plus a total owed. Users save friend groups (roommates, work lunch crew, family) with stored names and payment preferences (Venmo, Zelle, cash) for quick reuse. Data persistence uses SwiftData with models for Split (date, restaurant, total, tipPercent, taxAmount), SplitItem (name, price, assignees), and FriendGroup (name, members). On web, localStorage stores the same structure as JSON. The UI uses a stepped flow: Scan/Enter -> Assign -> Review -> Share. Export the summary as a formatted message via ShareLink or clipboard for pasting into group chats.",
   },
   {
-    category: "Business",
-    label: "Client voice",
-    tagline: "Hear what your customers actually want.",
-    signature: "Auto-clusters feedback into patterns and themes.",
-    screens: ["Inbox", "Feedback detail", "Patterns", "Decision log"],
-    accent: "#6366F1",
-    emoji: "📣",
+    id: "parking-spot-finder",
+    name: "Parking Spot Finder",
+    category: "Utility",
+    tagline: "Never forget where you parked again.",
+    signature: "GPS pin with photo, meter timer, and location sharing.",
+    screens: ["Map", "Save Spot", "Timer", "History"],
+    accent: "#FF9500",
+    emoji: "🅿️",
     prompt:
-      "A customer feedback aggregator for product-driven businesses. Capture feedback from any source: paste text, screenshot (VisionKit OCR), voice memo (SFSpeechRecognizer), or photo of a whiteboard. NaturalLanguage framework auto-tags sentiment (positive, neutral, negative) and clusters similar requests. Dashboard shows 'top 5 asks' with request counts. Decision log tracks what you shipped in response. Export monthly insights report via ShareLink. SwiftData with full-text search.",
-  },
-  {
-    category: "Business",
-    label: "Quote builder",
-    tagline: "Professional proposals in under a minute.",
-    signature: "Branded PDF quotes with e-signature capture.",
-    screens: ["Quotes", "New quote", "Preview", "Templates"],
-    accent: "#0EA5E9",
-    emoji: "📝",
-    prompt:
-      "A mobile quoting and proposal tool for freelancers and service businesses. Choose from service templates (consulting, design, development, photography), add line items with quantities and rates, apply tax and discount. Preview as a branded PDF with your logo and colors. Client signature capture via PencilKit. Auto-follow-up reminders for unsigned quotes. Track quote status (draft → sent → viewed → signed → invoiced). Export via ShareLink or email. SwiftData stores client history.",
-  },
-  {
-    category: "Business",
-    label: "Contractor command",
-    tagline: "Manage your freelancers without the spreadsheet.",
-    signature: "Budget guardrails alert before you overspend.",
-    screens: ["Team", "Timesheets", "Budgets", "Pay runs"],
-    accent: "#F97316",
-    emoji: "👷",
-    prompt:
-      "A contractor management app for business owners who hire freelancers. Add contractors with rates (hourly/project), track submitted hours and deliverables, approve timesheets with one swipe. Set per-contractor and per-project budget ceilings with alert notifications when 80% spent. Monthly spending breakdown by contractor and project in Swift Charts. Export pay run summaries as CSV. SwiftData persistence, grouped views by project or contractor.",
-  },
-  {
-    category: "Business",
-    label: "Storefront pulse",
-    tagline: "Your shop's daily vitals, no POS needed.",
-    signature: "Correlates sales with weather and day-of-week patterns.",
-    screens: ["Today", "Log sale", "Trends", "Inventory alerts"],
-    accent: "#84CC16",
-    emoji: "🏪",
-    prompt:
-      "A lightweight daily tracker for physical retail, market vendors, and pop-up shop owners. Tap to log each sale (amount + category). Manual inventory counter with low-stock alerts. Foot traffic counter (manual tap or photo-based). Correlates daily revenue with weather (WeatherKit) and day-of-week patterns using Swift Charts. Shows best/worst selling days, peak hours, and seasonal trends. Weekly summary exportable as PDF. Lock Screen widget shows today's sales total.",
+      "A parking location app that saves exactly where you parked with a GPS pin and optional photo. The save spot screen captures your current location via CoreLocation on iOS or the Geolocation API on web, lets you snap a photo of nearby landmarks for visual reference, and optionally set a parking meter expiration timer. The map screen shows your saved pin on a MapKit view (iOS) or Leaflet/Mapbox map (web) with walking directions back to your car. The timer screen displays a countdown to meter expiration with push notification alerts at 15 and 5 minutes remaining via UserNotifications on iOS or the Notifications API on web. A share button sends your parking location to companions via ShareLink so groups can find the car independently. History view shows past parking spots in a scrollable list with date, location name (reverse geocoded), duration parked, and thumbnail photo. Data model uses SwiftData with ParkingSpot (latitude, longitude, photoURL, meterExpiry, notes, savedAt) on iOS and localStorage on web. The UI features a prominent blue pin on a dark map style with a floating action button to save the current spot.",
   },
 
-  // ───── For Designers (5) ─────
+  // ───── Gaming (3) ─────
   {
-    category: "Design",
-    label: "Type specimen book",
-    tagline: "Your personal typography library on the go.",
-    signature: "Camera mode identifies fonts from real-world signage.",
-    screens: ["Library", "Specimen", "Pairings", "Type walk"],
-    accent: "#1E293B",
-    emoji: "🔤",
-    prompt:
-      "A personal font reference app for typographers and designers. Import system fonts and catalog them with tags (serif, sans, mono, display, weight, mood). Generate specimen sheets with pangrams, paragraphs, and size scales. Create and save font pairings with live preview at different sizes. 'Type Walk' camera mode captures text from real-world signage (VisionKit) and identifies similar system fonts. Export specimen cards as PNG via ShareLink. SwiftData library with search and filter.",
-  },
-  {
-    category: "Design",
-    label: "Contrast checker",
-    tagline: "Never ship inaccessible colors again.",
-    signature: "Camera-sampled colors with instant WCAG verdicts.",
-    screens: ["Palette", "Check", "Suggestions", "Export"],
-    accent: "#7C3AED",
-    emoji: "🔍",
-    prompt:
-      "A color accessibility tool for designers. Build palettes manually or sample colors from the camera. Instantly checks every color combination against WCAG 2.1 AA and AAA contrast ratios for normal and large text. Flags failures with suggested accessible alternatives (shifts hue/lightness minimally to pass). Preview color pairs on realistic UI mockups (buttons, cards, text blocks). Generate tint and shade scales. Export palettes as JSON design tokens, CSS custom properties, or SwiftUI Color extensions via ShareLink.",
-  },
-  {
-    category: "Design",
-    label: "Client review board",
-    tagline: "Structured design feedback, not messy email threads.",
-    signature: "Tap-to-comment on specific areas of your designs.",
-    screens: ["Projects", "Upload", "Review board", "Revisions"],
-    accent: "#E11D48",
-    emoji: "💬",
-    prompt:
-      "A design review app for client feedback. Upload screenshots or mockups of your work. Clients (or you, simulating a review) tap specific areas to drop pin comments — like spatial annotations on an image. Each comment has a status (open, resolved, deferred). Track revision rounds: v1, v2, v3 with side-by-side comparison. Project-level approval status (in review → changes requested → approved). Timeline shows review history. Export feedback summary as PDF. SwiftData persistence with image caching.",
-  },
-  {
-    category: "Design",
-    label: "Moodboard studio",
-    tagline: "Capture inspiration, present it beautifully.",
-    signature: "Auto-extracts dominant colors and clusters by mood.",
-    screens: ["Boards", "Capture", "Board editor", "Present"],
-    accent: "#D946EF",
-    emoji: "🖼",
-    prompt:
-      "A visual inspiration tool for designers. Capture images from camera, screenshots, or photo library into themed moodboards. On-device Vision extracts dominant colors from each image. Free-form canvas layout — pinch to resize, drag to arrange, add text labels. Auto-clusters images by color mood. Fullscreen presentation mode for client pitches with swipe navigation. Export boards as high-res PNG or PDF via ShareLink. SwiftData stores boards with image thumbnails.",
-  },
-  {
-    category: "Design",
-    label: "Component cutter",
-    tagline: "Screenshot any UI. Extract its building blocks.",
-    signature: "Vision-powered extraction of spacing, colors, and radii.",
-    screens: ["Captures", "Analyze", "Tokens", "Reference library"],
-    accent: "#0D9488",
-    emoji: "🔬",
-    prompt:
-      "A UI reverse-engineering tool for designers and developers. Screenshot any app or website, then the app uses Vision to identify UI elements (buttons, cards, nav bars, text blocks). Extracts approximate spacing values, border radii, font sizes, and color swatches. Save analyzed screens to a reference library organized by app or style. Compare extracted tokens side-by-side across different designs. Export token sheets as JSON or PNG cheat sheets via ShareLink. SwiftData persistence.",
-  },
-
-  // ───── Gaming (5) ─────
-  {
+    id: "reflex-racer",
+    name: "Reflex Racer",
     category: "Gaming",
-    label: "Reflex arena",
-    tagline: "Train your reflexes with addictive micro-games.",
-    signature: "Adaptive difficulty that learns your reaction speed.",
-    screens: ["Arena", "Challenge", "Stats", "Leaderboard"],
+    tagline: "Test your reaction speed in fast-paced challenges.",
+    signature: "Tap targets at random positions with progressive difficulty and leaderboards.",
+    screens: ["Menu", "Game", "Results", "Leaderboard"],
     accent: "#FF3B30",
     emoji: "⚡",
     prompt:
-      "A reaction time training app with 4 addictive mini-games: Tap Target (hit circles as they appear), Color Flash (tap only when the correct color shows), Pattern Recall (memorize and replay a growing sequence), and Speed Sort (swipe items into correct buckets). Adaptive difficulty scales to the player's rolling average. Tracks personal bests per game mode with Swift Charts showing improvement over days and weeks. Daily challenge mode with a single attempt per day and streak tracking. Combo multiplier for consecutive correct responses with satisfying haptic bursts. SwiftData persistence for all scores, animated transitions between games with spring physics.",
+      "A fast-paced reaction time game where colorful circular targets appear at random positions and intervals on screen, and players must tap them as quickly as possible before they disappear. The game screen renders targets using SwiftUI Canvas on iOS or an HTML5 canvas on web, with targets shrinking over their lifetime to create urgency. Progressive difficulty increases speed and adds decoy targets (wrong color) that penalize taps. Each round lasts 30 seconds with a combo multiplier for consecutive successful taps that triggers haptic feedback bursts on iOS. The results screen shows reaction time statistics: average, fastest, slowest, accuracy percentage, and combo streaks displayed with Swift Charts bar graphs on iOS or Chart.js on web. Daily challenges offer a fixed seed so all players compete on the same target sequence, with a global leaderboard showing top times. Data persistence uses SwiftData with GameSession (date, score, avgReactionMs, accuracy, streak) on iOS and localStorage on web. Navigation is straightforward: Menu -> Game -> Results with a persistent leaderboard tab. Visual style uses a dark background with neon-colored targets and particle burst animations on successful taps.",
   },
   {
+    id: "dungeon-crawl-dice",
+    name: "Dungeon Crawl Dice",
     category: "Gaming",
-    label: "Stack master",
-    tagline: "Time your drops. Build the tallest tower.",
-    signature: "Blocks shrink on misalignment — precision is everything.",
-    screens: ["Tower", "Game over", "Best towers", "Daily challenge"],
-    accent: "#FF9500",
-    emoji: "🏗️",
-    prompt:
-      "A precision stacking game where blocks slide back and forth and you tap to drop them. Misaligned portions get sliced off, making each subsequent block smaller. Perfect drops (no overhang) trigger a combo streak with screen shake and haptic feedback. Game ends when the block becomes too thin. Three modes: Classic (endless), Sprint (30-second rush), and Daily Seed (everyone gets the same sequence, one attempt per day). SwiftUI Canvas renders the tower with gradient-colored blocks. Leaderboard shows best heights. SwiftData tracks personal records and daily challenge history.",
-  },
-  {
-    category: "Gaming",
-    label: "Cipher breaker",
-    tagline: "Crack codes. Sharpen your mind daily.",
-    signature: "Procedurally generated cryptograms with a hint system.",
-    screens: ["Daily puzzle", "Solve", "Stats", "Archive"],
-    accent: "#5856D6",
-    emoji: "🔐",
-    prompt:
-      "A daily cryptogram puzzle game that sharpens logical thinking. Each day a famous quote is encrypted with a substitution cipher. Tap a cipher letter to guess the real letter — matched letters auto-fill across the puzzle. Hint system reveals one letter at a time (limited hints per puzzle). Three difficulty tiers: Beginner (short quotes, 2 free hints), Standard (medium quotes, 1 hint), and Expert (long quotes, no hints). Tracks solve times, streaks, and completion rates with Swift Charts. Archive of past puzzles you can replay. SwiftData persistence, beautiful monospaced typography with the theme's font style.",
-  },
-  {
-    category: "Gaming",
-    label: "Memory palace",
-    tagline: "Match pairs across beautifully themed decks.",
-    signature: "Progressive grid sizes with zen and timed modes.",
-    screens: ["Menu", "Game board", "Results", "Collection"],
+    tagline: "Your tabletop RPG companion in your pocket.",
+    signature: "Customizable dice roller with character sheets and initiative tracker.",
+    screens: ["Dice Roller", "Character Sheet", "Initiative", "Loot Table"],
     accent: "#AF52DE",
-    emoji: "🃏",
-    prompt:
-      "A polished card-matching memory game with 6 themed decks: Animals, Planets, Botanicals, Landmarks, Sea Creatures, and Gemstones. Each deck has unique card back art and a color palette. Progressive difficulty: 3×4 → 4×4 → 4×5 → 5×6 grids. Two modes: Zen (no timer, move counter) and Timed (countdown adds pressure). Cards flip with a smooth 3D rotation animation. Matched pairs pulse with the accent color and trigger haptic feedback. Mismatches shake briefly. Best scores tracked per deck and difficulty. Unlockable decks earned by completing lower difficulties. SwiftData stores all progress. Spring animations on card entrances, staggered by position.",
-  },
-  {
-    category: "Gaming",
-    label: "Maze dash",
-    tagline: "Tilt through procedural mazes against the clock.",
-    signature: "CoreMotion tilt controls with collectible gems.",
-    screens: ["Level select", "Maze", "Results", "Records"],
-    accent: "#34C759",
-    emoji: "🏃",
-    prompt:
-      "A tilt-controlled maze game using CoreMotion accelerometer data. Procedurally generated mazes with 5 size tiers (10×10 up to 30×30). Navigate a glowing orb through the maze by tilting your device. Collect gems scattered throughout for bonus points. Avoid dead ends — a subtle trail shows where you've already been. Time trial mode races the clock; Explore mode has no timer. Three stars awarded based on completion time and gems collected. Daily maze challenge with one procedural seed everyone shares. Minimap toggle in the corner. Smooth particle trail behind the orb rendered with SwiftUI Canvas. SwiftData tracks best times per tier. Haptic tap on gem collection, success burst on completion.",
-  },
-
-  // ───── Productivity (5) ─────
-  {
-    category: "Productivity",
-    label: "Focus forge",
-    tagline: "Deep work sessions with streak-powered motivation.",
-    signature: "Pomodoro timer with category tracking and focus reports.",
-    screens: ["Timer", "Log session", "Focus report", "Settings"],
-    accent: "#FF2D55",
-    emoji: "🔥",
-    prompt:
-      "A focus timer app for deep work. Configurable Pomodoro intervals (default 25 min work / 5 min break, customizable). Categorize sessions by project (work, study, side project, reading) with color-coded tags. Timer screen shows a radial progress ring that fills as time passes, with subtle pulse animation. Session log records every completed focus block with timestamps. Weekly and monthly focus reports using Swift Charts: total hours per category, daily streaks, average session length, and best focus day. Streak system rewards consecutive days of meeting your daily focus goal (configurable: 2-8 hours). Lock Screen widget shows current streak and today's focus time. Haptic tap at session start, satisfying completion burst when timer ends. SwiftData persistence.",
-  },
-  {
-    category: "Productivity",
-    label: "Habit chain",
-    tagline: "Don't break the chain. Build lasting habits.",
-    signature: "Visual streak chains with heat map calendar view.",
-    screens: ["Today", "Habit detail", "Calendar", "Statistics"],
-    accent: "#30D158",
-    emoji: "🔗",
-    prompt:
-      "A visual habit tracker built around the 'don't break the chain' philosophy. Add habits with custom names, icons (SF Symbols picker), and target frequency (daily, weekdays, 3x/week). Today view shows all habits with one-tap check-off — completed habits get a satisfying chain-link animation. Each habit's detail page shows its current streak, longest streak, and a GitHub-style heat map calendar (green intensity = completion density). Statistics screen aggregates all habits: overall completion rate, best performing habits, consistency trends over 30/90 days using Swift Charts. Optional daily reminder notifications at custom times per habit. Swipe to skip a day with a reason note. SwiftData persistence. Staggered list animations on the today screen.",
-  },
-  {
-    category: "Productivity",
-    label: "Stand-up log",
-    tagline: "Prep your daily standup in 30 seconds.",
-    signature: "Yesterday / today / blockers — formatted and shareable.",
-    screens: ["Today", "Write standup", "History", "Team"],
-    accent: "#007AFF",
-    emoji: "📋",
-    prompt:
-      "A daily standup meeting prep tool for developers and remote teams. Three-section entry form: 'Yesterday' (what you completed), 'Today' (what you'll work on), 'Blockers' (what's in your way). Each section supports bullet points with quick-add from yesterday's 'Today' items (carry forward). One-tap copy to clipboard as formatted Markdown or plain text for pasting into Slack or Teams. History view shows all past standups in a scrollable timeline — searchable by keyword. Team profiles let you save teammates' names and roles for reference. Weekly summary auto-generates a digest of the week's accomplishments. SwiftData stores all entries. Clean, focused UI with the app's accent color highlighting today's entry.",
-  },
-  {
-    category: "Productivity",
-    label: "Decision matrix",
-    tagline: "Stop overthinking. Decide with clarity.",
-    signature: "Weighted scoring grid that ranks your options objectively.",
-    screens: ["Decisions", "New decision", "Matrix", "Result"],
-    accent: "#5AC8FA",
-    emoji: "⚖️",
-    prompt:
-      "A decision-making app that replaces gut feelings with structured analysis. Create a decision (e.g. 'Which apartment to rent?'), add 2-5 options, then define 3-6 criteria (e.g. price, commute, space, neighborhood). Weight each criterion by importance (1-5 stars). Score each option against each criterion (1-10). The matrix screen shows a color-coded grid — green for high scores, red for low. Result screen shows the weighted ranking with a clear winner, plus a breakdown bar chart (Swift Charts) showing where each option excelled or fell short. Save past decisions for reference. Share the result summary via ShareLink as a formatted card. SwiftData persistence. Satisfying reveal animation when the winner is calculated.",
-  },
-  {
-    category: "Productivity",
-    label: "Energy tracker",
-    tagline: "Map your energy, not just your time.",
-    signature: "Discover your peak hours with pattern analysis.",
-    screens: ["Log", "Today", "Patterns", "Insights"],
-    accent: "#FFD60A",
-    emoji: "⚡",
-    prompt:
-      "An energy level tracking app that helps you discover your most productive hours. Quick-log your energy level (1-5) throughout the day with optional context tags (after coffee, post-lunch, exercise, meeting). Today view shows an energy curve as a smooth Swift Chart line graph. Patterns screen reveals your average energy by hour-of-day across weeks — surfaces your personal peak performance windows. Insights screen shows correlations: which activities precede high vs low energy. Configurable check-in reminders (every 2-3 hours via UserNotifications). Weekly energy report with your best and worst days. SwiftData stores all logs. Warm gradient backgrounds that shift from cool blue (low energy) to vibrant gold (high energy) based on your latest reading.",
-  },
-
-  // ───── Creative & Out-of-the-Box (5) ─────
-  {
-    category: "Creative",
-    label: "Dream journal",
-    tagline: "Capture dreams before they fade. Find the patterns.",
-    signature: "Recurring symbol tracker with visual dream map.",
-    screens: ["Journal", "Record dream", "Symbols", "Dream map"],
-    accent: "#BF5AF2",
-    emoji: "🌙",
-    prompt:
-      "A dream journaling app designed for the 30 seconds after you wake up. Quick-capture screen with large text input optimized for groggy typing. Tag each dream with mood (5 emoji scale), vividness (1-5), lucidity (yes/no), and recurring symbols (flying, water, falling, chase, etc.) from a customizable symbol library. Symbols screen tracks which themes appear most often with Swift Charts frequency bars. Dream map is a visual constellation — each dream is a dot, connected by shared symbols, forming clusters of related dreams over time. Search across all dreams by keyword or symbol. Monthly dream digest shows patterns. SwiftData persistence. Dark purple/indigo theme with soft gradients that feel dreamlike. Subtle star-field particle animation on the journal screen.",
-  },
-  {
-    category: "Creative",
-    label: "Story dice",
-    tagline: "Roll for inspiration. Write in the moment.",
-    signature: "Randomized creative writing prompts with a sprint timer.",
-    screens: ["Roll", "Writing sprint", "Stories", "Custom dice"],
-    accent: "#FF6B6B",
     emoji: "🎲",
     prompt:
-      "A creative writing prompt generator using virtual dice. Four dice categories: Character (detective, astronaut, chef, ghost, child, inventor), Setting (abandoned lighthouse, space station, underwater city, midnight train, ancient library, rooftop garden), Conflict (a stolen letter, a ticking clock, a mistaken identity, a forbidden door, a lost memory, an impossible promise), and Wild Card (it starts raining indoors, gravity reverses, everyone speaks in rhyme, time moves backward, colors disappear, music becomes visible). Roll all four dice with a satisfying physics animation. Lock in your prompt and start a timed writing sprint (5, 10, or 15 minutes) with a minimalist distraction-free writing screen. Save completed stories with the prompt that inspired them. Create custom dice with your own faces. Share your favorite prompts via ShareLink. SwiftData stores all stories and custom dice.",
+      "A tabletop RPG companion app with a customizable dice roller supporting d4, d6, d8, d10, d12, d20, and d100 with physics-based rolling animations rendered in SwiftUI Canvas on iOS or CSS 3D transforms on web. Users create dice presets for common rolls (attack: 1d20+5, damage: 2d6+3, fireball: 8d6) and tap to roll with satisfying bounce animations and sound effects using AVAudioEngine on iOS or the Web Audio API. The character sheet screen stores stats (STR, DEX, CON, INT, WIS, CHA), hit points with a visual health bar, armor class, and inventory list. The initiative tracker lets the DM add all combatants with their initiative rolls, then auto-sorts and highlights the current turn with a tap-to-advance interface. The loot table screen has configurable random loot generators by rarity tier (common, uncommon, rare, legendary) with weighted probabilities. Data persistence uses SwiftData with Character (name, stats, hp, inventory), DicePreset (name, formula), and Encounter (combatants, currentTurn) models on iOS, and localStorage on web. The UI uses a parchment-and-ink fantasy theme with a dark mode option.",
   },
   {
-    category: "Creative",
-    label: "Zen garden",
-    tagline: "Rake sand. Place stones. Find stillness.",
-    signature: "Touch-driven sand patterns with ambient soundscapes.",
-    screens: ["Garden", "Elements", "Gallery", "Meditate"],
-    accent: "#A2845E",
-    emoji: "🪨",
+    id: "word-chain-battle",
+    name: "Word Chain Battle",
+    category: "Gaming",
+    tagline: "Multiplayer word game with category constraints.",
+    signature: "Timed rounds, power-ups, and ranked matchmaking.",
+    screens: ["Lobby", "Game Board", "Power-ups", "Rankings"],
+    accent: "#5856D6",
+    emoji: "🔤",
     prompt:
-      "An interactive zen garden for mindful breaks. SwiftUI Canvas renders a sand surface that you rake by dragging your finger — trails follow your touch with realistic curved lines. Place stones, moss patches, small bonsai trees, and water features from the elements palette. Each element type generates a subtle ambient sound (trickling water, wind through leaves, distant chimes) that layers into a unique soundscape using AVAudioEngine. Pinch to zoom, long-press to remove elements. Save your garden compositions to a gallery with screenshots. Meditate mode dims the UI and plays the garden's soundscape for a configurable timer (3, 5, 10, 15 min) with a gentle bell at the end. Daily garden prompt suggests a theme (e.g. 'Balance', 'Simplicity', 'Flow'). SwiftData saves garden layouts. Warm earth-tone palette with subtle paper texture backgrounds.",
+      "A multiplayer word chain game where players take turns entering words that start with the last letter of the previous word, constrained to a chosen category (animals, foods, cities, movies, etc.). Each turn has a countdown timer (starts at 15 seconds, decreases as rounds progress) displayed as an animated circular progress ring. Power-ups add strategic depth: Freeze (pause opponent's timer for 3 seconds), Swap (change the required starting letter), Shield (block one invalid-word penalty), and Double (next valid word scores 2x points). The game board shows the chain of words growing vertically with player colors alternating, and invalid entries trigger a shake animation with haptic feedback on iOS. Ranked matchmaking pairs players by skill rating using an ELO-style system. The rankings screen shows global and friends leaderboards with win/loss records, longest chains, and favorite categories. Data model uses SwiftData with Player (username, rating, wins, losses), Match (players, words, winner, duration), and a local dictionary for word validation on iOS; on web, localStorage stores stats while game logic uses a bundled word list. Real-time multiplayer is simulated with a pass-and-play mode for the preview. Visual style uses bold typography with letter tiles inspired by Scrabble.",
+  },
+
+  // ───── Health (1) ─────
+  {
+    id: "mood-journal",
+    name: "Mood Journal",
+    category: "Health",
+    tagline: "Track your mood with emoji and discover patterns.",
+    signature: "Quick daily logging with pattern detection and correlations.",
+    screens: ["Today", "Log Mood", "Patterns", "Journal"],
+    accent: "#FF6B6B",
+    emoji: "😊",
+    prompt:
+      "A mood tracking app designed for quick daily check-ins using emoji-based mood selection (five levels from great to awful) with optional short journal entries. The log mood screen presents five large emoji buttons in a horizontal row; tapping one records the mood with a timestamp and optional tags (work, exercise, social, sleep quality, weather) for correlation analysis. The patterns screen uses Swift Charts on iOS or Chart.js on web to display mood trends over weeks and months as a smooth line graph, plus correlation insights that surface which tags associate with better or worse moods (e.g., 'You feel 40% better on days you exercise'). The journal view shows a scrollable timeline of all entries with mood emoji, date, tags, and any written notes. A weekly summary notification reminds users of their average mood and top positive correlations. Data persistence uses SwiftData with MoodEntry (mood: Int 1-5, emoji: String, tags: [String], note: String?, timestamp: Date) on iOS and localStorage on web. The UI uses warm gradients that shift color based on the current mood selection, from deep blue (low) to sunny yellow (high). Smooth spring animations on mood selection with gentle haptic feedback on iOS.",
+  },
+
+  // ───── Finance (2) ─────
+  {
+    id: "subscription-manager",
+    name: "Subscription Manager",
+    category: "Finance",
+    tagline: "Track every recurring charge in one place.",
+    signature: "Monthly and yearly cost breakdown with renewal reminders.",
+    screens: ["Dashboard", "Add Subscription", "Calendar", "Categories"],
+    accent: "#10B981",
+    emoji: "💳",
+    prompt:
+      "A subscription tracking app that gives users a clear picture of their recurring expenses and upcoming renewals. The dashboard shows total monthly and yearly spend as large headline numbers, with a categorized breakdown (streaming, software, fitness, news, gaming, cloud storage) displayed as a donut chart using Swift Charts on iOS or Chart.js on web. The add subscription screen lets users enter service name, amount, billing cycle (weekly/monthly/yearly), category, next renewal date, and an optional icon or color. The calendar view highlights upcoming renewal dates with color-coded dots and shows a scrollable list of what renews each day. Push notifications via UserNotifications on iOS or the Notifications API on web alert users 3 days before renewals so they can cancel unwanted services. A spending trends section shows month-over-month changes and flags subscriptions that increased in price. Data persistence uses SwiftData with Subscription (name, amount, cycle, category, nextRenewal, iconName, color, isActive) on iOS and localStorage on web. The UI uses a clean financial dashboard aesthetic with green for income/savings and the accent color for spending categories. Swipe to archive cancelled subscriptions without deleting history.",
   },
   {
-    category: "Creative",
-    label: "Pixel canvas",
-    tagline: "Retro pixel art, frame by frame.",
-    signature: "Onion-skinning animation editor with palette presets.",
-    screens: ["Canvas", "Palette", "Frames", "Gallery"],
-    accent: "#00C7BE",
-    emoji: "🎨",
+    id: "garage-sale-pricer",
+    name: "Garage Sale Pricer",
+    category: "Finance",
+    tagline: "Photograph items and get AI-suggested prices.",
+    signature: "Generate price tags, track sales, and calculate profits.",
+    screens: ["Inventory", "Add Item", "Price Tags", "Sales Summary"],
+    accent: "#F59E0B",
+    emoji: "🏷️",
     prompt:
-      "A pixel art creation tool with animation support. Grid canvas sizes from 8×8 to 32×32. Tap to place pixels, drag to draw lines, long-press to fill. 12 curated color palettes inspired by retro consoles (Game Boy, NES, SNES, Commodore 64, etc.) plus a custom palette builder. Undo/redo stack. Frame-by-frame animation: duplicate the current frame, make edits, toggle onion-skinning to see the previous frame as a ghost overlay. Play animation at configurable FPS (2-12). Gallery saves finished artworks and animations. Export as PNG (still) or animated GIF via ShareLink. Each palette has its own character — the UI tints to match the selected palette's vibe. SwiftData stores all artwork. Zoomed-in editing with a pixel grid overlay, minimap in the corner showing the full canvas.",
+      "A garage sale preparation app that helps users photograph items, set prices, generate printable price tags, and track sales on the day. The add item screen uses the camera to photograph an item, then suggests a price based on the item category and condition (users select from categories: electronics, clothing, furniture, books, toys, kitchen, sports, other). Users confirm or adjust the suggested price and add a brief description. The inventory screen shows a grid of all items with photos, prices, and sold/unsold status. The price tags screen generates a printable sheet of price tags with item name, price, and an optional QR code linking to item details, exportable as a PDF via ShareLink on iOS or window.print() on web. On sale day, users tap items to mark as sold and optionally record the actual sale price (for negotiated discounts). The sales summary shows total revenue, items sold vs remaining, average discount given, and a category breakdown chart using Swift Charts on iOS or Chart.js on web. Data persistence uses SwiftData with GarageItem (photo: Data, name, category, askingPrice, soldPrice, isSold, condition) on iOS and IndexedDB (for photo blobs) on web. The UI has a friendly, colorful yard-sale aesthetic with hand-drawn style borders and warm colors.",
+  },
+
+  // ───── Social (2) ─────
+  {
+    id: "pet-playdate-finder",
+    name: "Pet Playdate Finder",
+    category: "Social",
+    tagline: "Find compatible playdate matches for your pet.",
+    signature: "Pet profiles, scheduled meetups, and shared photo albums.",
+    screens: ["Discover", "Pet Profile", "Schedule", "Photos"],
+    accent: "#FF6B35",
+    emoji: "🐾",
+    prompt:
+      "A social app for pet owners to find compatible playdate partners for their animals. Users create detailed pet profiles with photos, breed, size, age, energy level (calm/moderate/hyper), temperament tags (friendly, shy, playful, gentle), and vaccination status. The discover screen shows nearby pets as swipeable cards (using CoreLocation on iOS or Geolocation API on web for proximity) filtered by compatibility: matching size range, compatible energy levels, and species (dogs with dogs, cats with cats). Users send playdate requests with proposed date, time, and location (park, backyard, beach). The schedule screen shows upcoming and past meetups in a calendar format with details and directions via MapKit on iOS or embedded maps on web. The photos screen is a shared album where both owners can upload photos from their playdate. Data persistence uses SwiftData with Pet (name, species, breed, size, energy, temperament, photos), Playdate (petIds, date, location, status), and Photo (imageData, playdateId, caption) on iOS; localStorage and base64 image storage on web for the preview. The UI uses rounded cards with playful illustrations and a warm, friendly color palette with paw-print accents.",
   },
   {
-    category: "Creative",
-    label: "Sound walk",
-    tagline: "Record the sounds of your neighborhood. Build an audio map.",
-    signature: "Geotagged field recordings pinned to a personal sound map.",
-    screens: ["Sound map", "Record", "Library", "Soundscape mixer"],
-    accent: "#64D2FF",
-    emoji: "🎧",
+    id: "gift-idea-vault",
+    name: "Gift Idea Vault",
+    category: "Social",
+    tagline: "Save gift ideas year-round for everyone you love.",
+    signature: "Track birthdays, budgets, and gift status from idea to given.",
+    screens: ["People", "Add Idea", "Occasions", "Budget"],
+    accent: "#EC4899",
+    emoji: "🎁",
     prompt:
-      "A field recording app for capturing and mapping the sounds of your environment. Record audio clips (10-60 seconds) with automatic geolocation tagging via CoreLocation. Each recording is pinned to a MapKit map view showing all your sound captures as colored dots (categorized: nature, urban, water, music, voices, mechanical). Tap any pin to play the recording with a waveform visualization using SwiftUI Canvas. Library view lists all recordings with search, filter by category, and sort by date or location. Soundscape mixer lets you layer up to 4 recordings simultaneously with individual volume sliders to create ambient mixes — play them during work or sleep. Export recordings or mixes via ShareLink. SwiftData stores metadata and file references. Waveform animations pulse with audio amplitude. Cool blue-to-teal gradient theme evoking open air and exploration.",
+      "A year-round gift idea collection app that ensures users never scramble for last-minute presents. The people screen shows a list of recipients (family, friends, coworkers) with their upcoming birthdays or occasions and a count of saved ideas per person. The add idea screen captures gift ideas anytime inspiration strikes: item name, link/photo, estimated price, which person it is for, and occasion (birthday, holiday, anniversary, just because). Ideas flow through statuses: Idea -> Purchased -> Wrapped -> Given, tracked with simple tap-to-advance. The occasions screen shows a timeline of upcoming events with countdown days and associated gift ideas, sending push notifications 2 weeks before via UserNotifications on iOS or the Notifications API on web. The budget screen shows spending per person and per occasion with limits users can set, visualized as progress bars that turn amber at 80% and red at 100%. Data persistence uses SwiftData with Person (name, birthday, relationship, notes), GiftIdea (title, url, photoData, price, status, personId, occasion) on iOS and localStorage on web. The UI uses a warm, celebratory design with confetti micro-animations when marking a gift as given. Supports ShareLink to send wishlists to family members who ask 'what do they want?'.",
+  },
+
+  // ───── Education (2) ─────
+  {
+    id: "flashcard-duel",
+    name: "Flashcard Duel",
+    category: "Education",
+    tagline: "Study with spaced repetition, compete with friends.",
+    signature: "Challenge friends to timed quizzes with custom decks.",
+    screens: ["Decks", "Study", "Duel", "Leaderboard"],
+    accent: "#6366F1",
+    emoji: "🧠",
+    prompt:
+      "A flashcard study app combining spaced-repetition learning with competitive timed quizzes. Users create custom decks (language vocab, science terms, history dates, coding concepts) with front/back card pairs and optional images. The study screen implements SM-2 spaced repetition: cards appear based on their due date, and users rate recall difficulty (Again, Hard, Good, Easy) which adjusts the next review interval. The duel mode challenges friends to answer the same deck under time pressure; both players see cards simultaneously and tap to reveal, then self-grade. Faster correct answers earn more points, displayed on a split-screen racing format. The leaderboard shows rankings among friends per deck with stats like accuracy, average speed, and longest study streak. Data persistence uses SwiftData with Deck (title, category, cardCount), Card (front, back, imageData, interval, easeFactor, nextReview), and DuelResult (deckId, scores, date) on iOS; localStorage with equivalent structures on web. Cards flip with a 3D rotation animation (rotateY transform). The UI uses a scholarly but modern aesthetic with indigo accents, clean typography, and subtle paper textures on card surfaces. Study reminders via UserNotifications keep users consistent.",
+  },
+  {
+    id: "plant-care-guide",
+    name: "Plant Care Guide",
+    category: "Education",
+    tagline: "Identify plants and never forget to water them.",
+    signature: "Personalized care schedules with photo progress tracking.",
+    screens: ["My Plants", "Add Plant", "Care Schedule", "Progress"],
+    accent: "#22C55E",
+    emoji: "🌱",
+    prompt:
+      "A houseplant care app that helps users identify plants, track watering and care schedules, and monitor growth through photos. The add plant screen uses the camera with VisionKit on iOS or a file upload on web to photograph a plant, then suggests identification from a built-in database of 100+ common houseplants with care requirements. Users confirm the plant type and set its location (windowsill, desk, bathroom, patio) which influences care recommendations based on typical light levels. The care schedule screen shows a weekly calendar grid with watering, fertilizing, and rotation reminders color-coded per plant, powered by UserNotifications on iOS or the Notifications API on web. The progress screen displays a photo timeline for each plant showing growth over weeks and months in a horizontal scrollable strip. Users log care actions with one tap (watered, fertilized, repotted, pruned) to build a care history. Data persistence uses SwiftData with Plant (name, species, location, photoData, waterIntervalDays, lastWatered, lightNeeds), CareLog (plantId, action, date, note), and ProgressPhoto (plantId, imageData, date) on iOS; localStorage and base64 on web. The UI uses a fresh green-and-white botanical aesthetic with leaf illustrations and gentle animations when marking tasks complete.",
+  },
+
+  // ───── Lifestyle (1) ─────
+  {
+    id: "micro-adventure-generator",
+    name: "Micro-Adventure Generator",
+    category: "Lifestyle",
+    tagline: "Discover unique local adventures for any budget.",
+    signature: "Input your constraints and get curated activity suggestions with directions.",
+    screens: ["Generate", "Adventure Detail", "Saved", "History"],
+    accent: "#F97316",
+    emoji: "🧭",
+    prompt:
+      "A local adventure suggestion app that generates unique activity ideas based on user constraints. The generate screen presents input fields for location (current GPS via CoreLocation on iOS or Geolocation API on web, or manual entry), available time (30 min to full day), budget (free/$/$$/$$$$), group size (solo, couple, small group, large group), and optional mood tags (active, relaxing, creative, social, nature). Based on these inputs, the app suggests 3-5 curated adventure ideas from a built-in database of activity templates contextualized to the user's area (park picnics, urban sketching, coffee shop hopping, sunset hikes, free museum days, farmers market tours, photo walks, volunteer opportunities). The adventure detail screen shows a description, estimated duration, cost breakdown, what to bring checklist, and a map pin with directions via MapKit on iOS or an embedded map on web. Users save favorites and rate completed adventures (1-5 stars) with photos. The history screen shows a visual journal of past adventures with ratings, photos, and dates in a masonry grid. Data persistence uses SwiftData with Adventure (title, description, category, duration, cost, location, rating, photos, completedAt) on iOS and localStorage on web. The UI uses an outdoor-inspired palette with warm oranges, natural greens, and topographic map pattern accents.",
   },
 ];

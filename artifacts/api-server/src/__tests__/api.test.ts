@@ -559,13 +559,16 @@ describe("GET /api/templates", () => {
   it("returns template list", async () => {
     const res = await request(app).get("/api/templates");
     expect(res.status).toBe(200);
-    expect(Array.isArray(res.body)).toBe(true);
-    expect(res.body.length).toBeGreaterThan(0);
+    expect(res.body.templates).toBeDefined();
+    expect(Array.isArray(res.body.templates)).toBe(true);
+    expect(res.body.templates.length).toBe(15);
 
-    const tmpl = res.body[0];
-    expect(tmpl.label).toBeDefined();
+    const tmpl = res.body.templates[0];
+    expect(tmpl.id).toBeDefined();
+    expect(tmpl.name).toBeDefined();
     expect(tmpl.category).toBeDefined();
     expect(tmpl.prompt).toBeDefined();
+    expect(tmpl.icon).toBeDefined();
   });
 });
 
