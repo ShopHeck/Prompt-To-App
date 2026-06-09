@@ -64,7 +64,7 @@ if (fs.existsSync(publicDir)) {
       }
     },
   }));
-  app.get("*", (_req, res) => {
+  app.get("/{*splat}", (_req, res) => {
     res.setHeader("Cache-Control", "public, max-age=300, s-maxage=600, stale-while-revalidate=86400");
     res.setHeader("Surrogate-Control", "max-age=600");
     res.sendFile(path.join(publicDir, "index.html"));
