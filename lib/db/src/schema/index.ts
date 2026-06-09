@@ -3,6 +3,8 @@ export * from "./project_files";
 export * from "./users";
 export * from "./refinement_messages";
 export * from "./generation_runs";
+export * from "./generation_jobs";
 export * from "./project_revisions";
 export * from "./rate_limit_hits";
 export * from "./audit_events";
+export * from "./teams";

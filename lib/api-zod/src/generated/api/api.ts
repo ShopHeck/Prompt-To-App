@@ -16,6 +16,185 @@ export const HealthCheckResponse = zod.object({
 });
 
 /**
+ * @summary Deep readiness check (DB connectivity, metrics, memory)
+ */
+export const ReadinessCheckResponse = zod.object({
+  status: zod.enum(["ready", "degraded"]),
+  checks: zod.record(zod.string(), zod.enum(["ok", "error"])),
+  uptime: zod.number(),
+  version: zod.string(),
+  environment: zod.string(),
+  sentry: zod.boolean(),
+  metrics: zod.object({
+    totalRequests: zod.number(),
+    totalErrors: zod.number(),
+    statusCodes: zod.record(zod.string(), zod.number()),
+    avgResponseTimeMs: zod.number(),
+    p95ResponseTimeMs: zod.number(),
+  }),
+  memory: zod.object({
+    rss: zod.number(),
+    heapUsed: zod.number(),
+    heapTotal: zod.number(),
+  }),
+});
+
+/**
+ * @summary Create a new user account
+ */
+export const registerBodyPasswordMin = 8;
+
+export const RegisterBody = zod.object({
+  email: zod.string().email(),
+  password: zod.string().min(registerBodyPasswordMin),
+  displayName: zod.string().optional(),
+});
+
+/**
+ * @summary Log in with email and password
+ */
+export const LoginBody = zod.object({
+  email: zod.string().email(),
+  password: zod.string(),
+});
+
+export const LoginResponse = zod.object({
+  user: zod.object({
+    id: zod.number(),
+    email: zod.string(),
+    displayName: zod.string().nullable(),
+    plan: zod.enum(["free", "pro", "studio"]),
+  }),
+});
+
+/**
+ * @summary Destroy current session
+ */
+export const LogoutResponse = zod.object({
+  ok: zod.boolean(),
+});
+
+/**
+ * @summary Get current authenticated user and quota
+ */
+export const GetMeResponse = zod.object({
+  user: zod.object({
+    id: zod.number(),
+    email: zod.string(),
+    displayName: zod.string().nullable(),
+    plan: zod.enum(["free", "pro", "studio"]),
+  }),
+  quota: zod
+    .object({
+      used: zod.number(),
+      limit: zod.number(),
+      resetsAt: zod.string(),
+    })
+    .optional(),
+});
+
+/**
+ * @summary Change password (requires authentication)
+ */
+export const changePasswordBodyNewPasswordMin = 8;
+
+export const ChangePasswordBody = zod.object({
+  currentPassword: zod.string(),
+  newPassword: zod.string().min(changePasswordBodyNewPasswordMin),
+});
+
+export const ChangePasswordResponse = zod.object({
+  ok: zod.boolean(),
+});
+
+/**
+ * @summary Get available subscription plans
+ */
+export const GetPlansResponse = zod.object({
+  plans: zod.record(
+    zod.string(),
+    zod.object({
+      name: zod.string(),
+      price: zod.string(),
+      features: zod.array(zod.string()),
+    }),
+  ),
+});
+
+/**
+ * @summary Create Stripe Checkout session (requires authentication)
+ */
+export const CreateCheckoutBody = zod.object({
+  plan: zod.enum(["pro", "studio"]),
+});
+
+export const CreateCheckoutResponse = zod.object({
+  url: zod.string(),
+});
+
+/**
+ * @summary Get current subscription info (requires authentication)
+ */
+export const GetSubscriptionResponse = zod.object({
+  plan: zod.string(),
+  status: zod.string(),
+  currentPeriodEnd: zod.string().nullish(),
+  usage: zod.number(),
+  planDetails: zod.object({
+    name: zod.string(),
+    price: zod.string(),
+    features: zod.array(zod.string()),
+  }),
+});
+
+/**
+ * @summary Create Stripe Customer Portal session (requires authentication)
+ */
+export const CreatePortalResponse = zod.object({
+  url: zod.string(),
+});
+
+/**
+ * @summary Stripe webhook endpoint (HMAC-verified)
+ */
+export const StripeWebhookBody = zod.object({}).passthrough();
+
+export const StripeWebhookResponse = zod.object({
+  received: zod.boolean(),
+});
+
+/**
+ * @summary Get available AI providers and their models
+ */
+export const GetProvidersResponse = zod.object({
+  providers: zod.array(zod.string()),
+  default: zod.string().nullable(),
+  models: zod.record(
+    zod.string(),
+    zod.object({
+      planner: zod.string(),
+      engineer: zod.string(),
+      reviewer: zod.string(),
+    }),
+  ),
+});
+
+/**
+ * @summary Get curated prompt templates
+ */
+export const GetTemplatesResponseItem = zod.object({
+  label: zod.string(),
+  category: zod.string(),
+  tagline: zod.string(),
+  signature: zod.string(),
+  screens: zod.array(zod.string()),
+  accent: zod.string(),
+  emoji: zod.string(),
+  prompt: zod.string(),
+});
+export const GetTemplatesResponse = zod.array(GetTemplatesResponseItem);
+
+/**
  * @summary List all projects
  */
 export const ListProjectsResponseItem = zod.object({
@@ -111,6 +290,30 @@ export const GetProjectFilesResponseItem = zod.object({
   createdAt: zod.string(),
 });
 export const GetProjectFilesResponse = zod.array(GetProjectFilesResponseItem);
+
+/**
+ * @summary Update the content of a project file
+ */
+export const UpdateProjectFileParams = zod.object({
+  id: zod.coerce.number(),
+  fileId: zod.coerce.number(),
+});
+
+export const updateProjectFileBodyContentMax = 512000;
+
+export const UpdateProjectFileBody = zod.object({
+  content: zod.string().max(updateProjectFileBodyContentMax),
+});
+
+export const UpdateProjectFileResponse = zod.object({
+  id: zod.number(),
+  projectId: zod.number(),
+  filename: zod.string(),
+  filepath: zod.string(),
+  content: zod.string(),
+  language: zod.string(),
+  createdAt: zod.string(),
+});
 
 /**
  * @summary Generate a public share token for a project
@@ -252,6 +455,61 @@ export const GetProjectPreviewParams = zod.object({
  */
 export const GetSharedProjectPreviewParams = zod.object({
   token: zod.coerce.string(),
+});
+
+/**
+ * @summary Get refinement chat history for a project
+ */
+export const GetRefinementsParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetRefinementsResponseItem = zod.object({
+  id: zod.number(),
+  projectId: zod.number(),
+  role: zod.enum(["user", "assistant"]),
+  content: zod.string(),
+  filesChanged: zod.array(zod.string()).nullish(),
+  createdAt: zod.string(),
+});
+export const GetRefinementsResponse = zod.array(GetRefinementsResponseItem);
+
+/**
+ * @summary Submit a refinement instruction (requires Pro/Studio plan)
+ */
+export const RefineProjectParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const RefineProjectBody = zod.object({
+  instruction: zod.string().min(1),
+});
+
+export const RefineProjectResponse = zod.object({
+  summary: zod.string(),
+  filesChanged: zod.array(zod.string()),
+  files: zod
+    .array(
+      zod.object({
+        path: zod.string(),
+        content: zod.string(),
+      }),
+    )
+    .optional(),
+});
+
+/**
+ * @summary Generate a React + Tailwind web app (SSE stream, requires react framework)
+ */
+export const GenerateWebParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+/**
+ * @summary Download project as a zip file
+ */
+export const DownloadProjectParams = zod.object({
+  id: zod.coerce.number(),
 });
 
 /**

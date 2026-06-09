@@ -23,6 +23,7 @@ import { PATTERN_MENU } from "./component-library";
 import { getStylePreset } from "./style-presets";
 import { logger } from "./logger";
 import { getGenerator, resolveTargetFromFramework } from "./generators";
+import { startTrace, startSpan, endSpan } from "./tracing";
 import type { ArchitecturePlan, SpmDependency, AccuracyReport } from "./types";
 import type { SendEvent, ReqLogger, PlanningParams, CodeGenerationParams } from "./generation-types";
 import type { Response } from "express";
@@ -74,6 +75,9 @@ export class GenerationService {
       stylePresetId,
     } = params;
 
+    // Start a trace for the planning phase
+    const { traceId, spanId: planningSpanId } = startTrace("planning_phase", { projectId });
+
     const contextBlock = additionalContext
       ? `\nAdditional context from the user: ${additionalContext}`
       : "";
@@ -103,6 +107,10 @@ Description: ${promptForPlanning}${contextBlock}
 Produce the JSON architecture plan now.`;
 
     const models = DEFAULT_MODELS[provider];
+
+    // Trace the AI streaming call
+    const aiSpanId = startSpan(traceId, "ai_planning_call", planningSpanId, { projectId });
+
     const planStream = streamAI({
       provider,
       model: models.planner,
@@ -118,6 +126,13 @@ Produce the JSON architecture plan now.`;
         sendEvent({ type: "planning_chunk", chunk: chunk.content });
       }
     }
+
+    // End AI call span with metadata
+    await endSpan(aiSpanId, {
+      provider,
+      model: models.planner,
+      responseLength: planRaw.length,
+    });
 
     let architecturePlan: ArchitecturePlan;
     try {
@@ -137,6 +152,7 @@ Produce the JSON architecture plan now.`;
       };
     } catch (planParseErr) {
       reqLog.error({ planParseErr }, "Failed to parse architecture plan — aborting generation");
+      await endSpan(planningSpanId, { status: "error", error: "plan_parse_failed" });
       await db
         .update(projectsTable)
         .set({ status: "error" })
@@ -160,6 +176,14 @@ Produce the JSON architecture plan now.`;
       message: "Architecture plan generated",
     }).catch((err) => { logger.error({ err }, "Failed to record generation history"); });
 
+    // End planning phase span
+    await endSpan(planningSpanId, {
+      status: "success",
+      screenCount: architecturePlan.screens.length,
+      modelCount: architecturePlan.models.length,
+      fileCount: architecturePlan.fileList.length,
+    });
+
     sendEvent({ type: "plan", plan: architecturePlan });
     sendEvent({ type: "awaiting_approval", plan: architecturePlan });
     res.end();
@@ -175,6 +199,12 @@ Produce the JSON architecture plan now.`;
   ): Promise<void> {
     const { projectId, approvedPlan, additionalContext, provider, userId } = params;
 
+    // Start a trace for the code generation phase
+    const { traceId, spanId: codeGenSpanId } = startTrace("code_generation_phase", {
+      projectId,
+      userId: userId ?? undefined,
+    });
+
     const [project] = await db
       .select()
       .from(projectsTable)
@@ -182,6 +212,7 @@ Produce the JSON architecture plan now.`;
 
     if (!project) {
       sendEvent({ type: "error", message: "Project not found" });
+      await endSpan(codeGenSpanId, { status: "error", error: "project_not_found" });
       res.end();
       return;
     }
@@ -197,6 +228,7 @@ Produce the JSON architecture plan now.`;
     const validationErrors = generator.validate(approvedPlan);
     if (validationErrors.length > 0) {
       reqLog.error({ validationErrors, target }, "Plan validation failed for generator");
+      await endSpan(codeGenSpanId, { status: "error", error: "plan_validation_failed" });
       sendEvent({ type: "error", message: `Plan validation failed: ${validationErrors.join("; ")}` });
       res.end();
       return;
@@ -204,6 +236,7 @@ Produce the JSON architecture plan now.`;
 
     // Run the generator to produce files
     let generatorResult;
+    const generatorSpanId = startSpan(traceId, "generator_execute", codeGenSpanId, { projectId });
     try {
       generatorResult = await generator.generate({
         projectId,
@@ -218,9 +251,17 @@ Produce the JSON architecture plan now.`;
         reqLog,
         res,
       });
+      await endSpan(generatorSpanId, {
+        status: "success",
+        provider,
+        fileCount: generatorResult.files.length,
+        tokenUsage: generatorResult.tokenUsage ?? null,
+      });
     } catch (genErr) {
       const message = genErr instanceof Error ? genErr.message : "unknown generation error";
       reqLog.error({ genErr: message, target }, "Generator failed");
+      await endSpan(generatorSpanId, { status: "error", error: message });
+      await endSpan(codeGenSpanId, { status: "error", error: "generator_failed" });
       recordGenerationMetric("failed", 0, 0, provider, "");
       await db.update(projectsTable).set({ status: "error" }).where(eq(projectsTable.id, projectId));
       sendEvent({ type: "error", message });
@@ -395,6 +436,15 @@ Produce the JSON architecture plan now.`;
       provider,
       "",
     );
+
+    // End the code generation trace span
+    await endSpan(codeGenSpanId, {
+      status: "success",
+      provider,
+      fileCount: finalFileCount,
+      promptTokens: tokenUsage?.promptTokens ?? 0,
+      completionTokens: tokenUsage?.completionTokens ?? 0,
+    });
 
     res.end();
   }

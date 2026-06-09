@@ -7,6 +7,7 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { registerProcessHandlers } from "./middleware/error-handler";
 import { pool } from "@workspace/db";
+import { generationWorker } from "./lib/generation-worker";
 
 registerProcessHandlers();
 
@@ -19,6 +20,9 @@ const server = app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+
+  // Start the generation worker for crash-recovery job processing
+  generationWorker.start();
 });
 
 // ── Graceful shutdown ──────────────────────────────────────────────────────────
@@ -28,18 +32,28 @@ const SHUTDOWN_TIMEOUT_MS = 30_000;
 function gracefulShutdown(signal: string): void {
   logger.info({ signal }, "Received shutdown signal, draining connections...");
 
-  server.close(() => {
-    logger.info("HTTP server closed, closing DB pool...");
-    pool.end()
-      .then(() => {
-        logger.info("DB pool closed. Exiting.");
-        process.exit(0);
-      })
-      .catch((err) => {
-        logger.error({ err }, "Error closing DB pool");
-        process.exit(1);
+  // Stop the generation worker first (waits for current job to finish)
+  generationWorker.stop()
+    .then(() => {
+      logger.info("Generation worker stopped");
+    })
+    .catch((err) => {
+      logger.error({ err }, "Error stopping generation worker");
+    })
+    .finally(() => {
+      server.close(() => {
+        logger.info("HTTP server closed, closing DB pool...");
+        pool.end()
+          .then(() => {
+            logger.info("DB pool closed. Exiting.");
+            process.exit(0);
+          })
+          .catch((err) => {
+            logger.error({ err }, "Error closing DB pool");
+            process.exit(1);
+          });
       });
-  });
+    });
 
   // Force exit if draining takes too long
   setTimeout(() => {

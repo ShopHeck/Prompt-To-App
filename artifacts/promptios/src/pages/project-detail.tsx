@@ -6,26 +6,28 @@ import {
   useGetProject, 
   getGetProjectQueryKey,
   useGetProjectFiles,
-  getGetProjectFilesQueryKey
+  getGetProjectFilesQueryKey,
+  useUpdateProjectFile
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  FileCode, Play, RotateCw, AlertTriangle, File, CheckCircle2,
-  Copy, Download, Code2, Cpu, Share2, Check, Layers, Hammer, PencilLine,
+  FileCode, Play, RotateCw, AlertTriangle, CheckCircle2,
+  Download, Code2, Cpu, Share2, Check, Layers, Hammer, PencilLine,
   FolderTree, Smartphone, ArrowUpRight, MessageSquare
 } from "lucide-react";
 import { Link } from "wouter";
 import { PhonePreview } from "@/components/phone-preview";
 import { RefinementChat } from "@/components/refinement-chat";
+import { CodeEditor } from "@/components/code-editor";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle, SheetClose } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { PlanPanel, parsePartialPlan, type ArchitecturePlan, type PartialPlan } from "@/components/plan-panel";
 import { ClarifyPanel, ClarifyAnswersDisplay, type ClarifyingQuestion, type ClarifyAnswer } from "@/components/clarify-panel";
 import { AccuracyReportPanel, type AccuracyReport, type RepairHistoryEntry } from "@/components/accuracy-report-panel";
+import { SSEClient, type SSEConnectionState } from "@/lib/sse-client";
+import { SSEStatus } from "@/components/sse-status";
 import { BuildTerminal, type LogKind, type LogLine } from "@/components/build-terminal";
 import { Terminal as TerminalIcon } from "lucide-react";
 
@@ -188,6 +190,18 @@ export default function ProjectDetail() {
     }
   });
 
+  const updateFileMutation = useUpdateProjectFile({
+    mutation: {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: getGetProjectFilesQueryKey(projectId) });
+        toast({ title: "File saved", description: "Changes saved successfully." });
+      },
+      onError: () => {
+        toast({ title: "Save failed", description: "Could not save file changes.", variant: "destructive" });
+      },
+    },
+  });
+
   const consumeSseStream = async (response: Response, onEvent: (event: any) => void) => {
     if (!response.body) return;
     const reader = response.body.getReader();
@@ -199,16 +213,33 @@ export default function ProjectDetail() {
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split("\n");
       buffer = lines.pop() ?? "";
+      let currentId: string | null = null;
       for (const line of lines) {
-        if (line.trim().startsWith("data: ")) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("id: ")) {
+          currentId = trimmed.slice(4);
+          continue;
+        }
+        if (trimmed.startsWith("data: ")) {
           try {
-            const event = JSON.parse(line.trim().slice(6));
+            const event = JSON.parse(trimmed.slice(6));
             onEvent(event);
           } catch (_) {}
         }
       }
     }
   };
+
+  // SSE connection state for status indicator
+  const [sseState, setSseState] = useState<SSEConnectionState>("disconnected");
+  const sseClientRef = useRef<SSEClient | null>(null);
+
+  // Cleanup SSE client on unmount
+  useEffect(() => {
+    return () => {
+      sseClientRef.current?.close();
+    };
+  }, []);
 
   const handleGenerate = async () => {
     if (!projectId || isGenerating) return;
@@ -234,16 +265,17 @@ export default function ProjectDetail() {
     );
 
     try {
-      const response = await fetch(`/api/projects/${projectId}/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ additionalContext: null }),
-      });
-      
-      if (!response.ok) throw new Error("Generation request failed");
+      // Close any existing SSE client
+      sseClientRef.current?.close();
 
       let planChunkSeen = false;
-      await consumeSseStream(response, (event) => {
+      await new Promise<void>((resolve, reject) => {
+        const client = new SSEClient({
+          url: `/api/projects/${projectId}/generate`,
+          method: "POST",
+          body: JSON.stringify({ additionalContext: null }),
+          headers: { "Content-Type": "application/json" },
+          onEvent: (event: any) => {
         if (event.type === "clarify_check") {
           appendLog("clarify", "Inspecting prompt for ambiguity…");
         } else if (event.type === "clarify_questions") {
@@ -294,6 +326,24 @@ export default function ProjectDetail() {
           });
           queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
         }
+          },
+          onStateChange: (state) => {
+            setSseState(state);
+            if (state === "reconnecting") {
+              appendLog("info", "Connection lost, reconnecting...");
+            }
+            if (state === "disconnected") {
+              resolve();
+            }
+          },
+          onError: (err) => {
+            reject(err);
+          },
+          maxRetries: 5,
+        });
+
+        sseClientRef.current = client;
+        client.connect();
       });
     } catch (error) {
       setGenerationPhase("idle");
@@ -305,6 +355,7 @@ export default function ProjectDetail() {
       queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
     } finally {
       setIsGenerating(false);
+      sseClientRef.current = null;
     }
   };
 
@@ -327,16 +378,17 @@ export default function ProjectDetail() {
     );
 
     try {
-      const response = await fetch(`/api/projects/${projectId}/approve-plan`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan: planToSend, additionalContext: null }),
-      });
-
-      if (!response.ok) throw new Error("Approve plan request failed");
+      // Close any existing SSE client
+      sseClientRef.current?.close();
 
       let progressLogged = false;
-      await consumeSseStream(response, (event) => {
+      await new Promise<void>((resolve, reject) => {
+        const client = new SSEClient({
+          url: `/api/projects/${projectId}/approve-plan`,
+          method: "POST",
+          body: JSON.stringify({ plan: planToSend, additionalContext: null }),
+          headers: { "Content-Type": "application/json" },
+          onEvent: (event: any) => {
         if (event.type === "building") {
           setGenerationPhase("building");
           appendLog("build", "Synthesizing source code…");
@@ -420,6 +472,24 @@ export default function ProjectDetail() {
           });
           queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
         }
+          },
+          onStateChange: (state) => {
+            setSseState(state);
+            if (state === "reconnecting") {
+              appendLog("info", "Connection lost, reconnecting...");
+            }
+            if (state === "disconnected") {
+              resolve();
+            }
+          },
+          onError: (err) => {
+            reject(err);
+          },
+          maxRetries: 5,
+        });
+
+        sseClientRef.current = client;
+        client.connect();
       });
     } catch (error) {
       setGenerationPhase("idle");
@@ -431,6 +501,7 @@ export default function ProjectDetail() {
       queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
     } finally {
       setIsGenerating(false);
+      sseClientRef.current = null;
     }
   };
 
@@ -456,15 +527,17 @@ export default function ProjectDetail() {
     );
 
     try {
-      const response = await fetch(`/api/projects/${projectId}/answer-clarifications`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ skip, answers, additionalContext: null }),
-      });
-      if (!response.ok) throw new Error("Answer submission failed");
+      // Close any existing SSE client
+      sseClientRef.current?.close();
 
       let planChunkSeen = false;
-      await consumeSseStream(response, (event) => {
+      await new Promise<void>((resolve, reject) => {
+        const client = new SSEClient({
+          url: `/api/projects/${projectId}/answer-clarifications`,
+          method: "POST",
+          body: JSON.stringify({ skip, answers, additionalContext: null }),
+          headers: { "Content-Type": "application/json" },
+          onEvent: (event: any) => {
         if (event.type === "planning") {
           setGenerationPhase("planning");
           appendLog("plan", "Architect drafting blueprint…");
@@ -503,6 +576,24 @@ export default function ProjectDetail() {
           });
           queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
         }
+          },
+          onStateChange: (state) => {
+            setSseState(state);
+            if (state === "reconnecting") {
+              appendLog("info", "Connection lost, reconnecting...");
+            }
+            if (state === "disconnected") {
+              resolve();
+            }
+          },
+          onError: (err) => {
+            reject(err);
+          },
+          maxRetries: 5,
+        });
+
+        sseClientRef.current = client;
+        client.connect();
       });
     } catch (error) {
       setGenerationPhase("idle");
@@ -514,6 +605,7 @@ export default function ProjectDetail() {
       queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
     } finally {
       setIsGenerating(false);
+      sseClientRef.current = null;
     }
   };
 
@@ -617,16 +709,6 @@ export default function ProjectDetail() {
       setTimeout(() => setIsCopiedLink(false), 3000);
     } catch {
       toast({ title: "Error", description: "Could not generate share link.", variant: "destructive" });
-    }
-  };
-
-  const copyToClipboard = () => {
-    if (selectedFile?.content) {
-      navigator.clipboard.writeText(selectedFile.content);
-      toast({
-        title: "Copied to clipboard",
-        description: `${selectedFile.filename} copied.`,
-      });
     }
   };
 
@@ -996,6 +1078,7 @@ export default function ProjectDetail() {
             {/* Generation overlay — live terminal of agent thoughts */}
             {(isActivelyGenerating || (terminalLines.length > 0 && !terminalDismissed)) && (
               <div className="absolute inset-0 z-20 flex flex-col bg-background/85 backdrop-blur-sm p-3 sm:p-4 md:p-6">
+                <SSEStatus state={sseState} className="mb-2 self-end" />
                 <BuildTerminal
                   lines={terminalLines}
                   active={isActivelyGenerating}
@@ -1021,39 +1104,22 @@ export default function ProjectDetail() {
             )}
 
             {selectedFile ? (
-              <>
-                <div className="h-10 bg-background/80 border-b border-border/40 flex items-center px-4 justify-between shrink-0">
-                  <div className="flex items-center gap-2 text-sm font-mono text-muted-foreground">
-                    <File className="h-3.5 w-3.5" />
-                    <span>{selectedFile.filepath}</span>
-                  </div>
-                  <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground" onClick={copyToClipboard} title="Copy code">
-                    <Copy className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-                <div className="flex-1 overflow-auto bg-[#1E1E1E]">
-                  <SyntaxHighlighter
-                    language={selectedFile.language === 'swift' ? 'swift' : selectedFile.filename.endsWith('.plist') ? 'xml' : selectedFile.filename.endsWith('.md') ? 'markdown' : 'typescript'}
-                    style={vscDarkPlus}
-                    customStyle={{
-                      margin: 0,
-                      padding: '1rem',
-                      background: 'transparent',
-                      fontSize: '13px',
-                      lineHeight: '1.5',
-                    }}
-                    showLineNumbers
-                    lineNumberStyle={{
-                      minWidth: '2.5em',
-                      paddingRight: '1em',
-                      color: '#6e7681',
-                      textAlign: 'right'
-                    }}
-                  >
-                    {selectedFile.content}
-                  </SyntaxHighlighter>
-                </div>
-              </>
+              <div className="flex-1 flex flex-col overflow-hidden bg-[#1E1E1E]">
+                <CodeEditor
+                  filename={selectedFile.filename}
+                  filepath={selectedFile.filepath}
+                  content={selectedFile.content}
+                  readOnly={!project}
+                  isSaving={updateFileMutation.isPending}
+                  onSave={(newContent) => {
+                    updateFileMutation.mutate({
+                      id: projectId,
+                      fileId: selectedFile.id,
+                      data: { content: newContent },
+                    });
+                  }}
+                />
+              </div>
             ) : !isActivelyGenerating ? (
               <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-8 text-center bg-background">
                 <Code2 className="h-16 w-16 opacity-20 mb-4" />

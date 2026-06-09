@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Request, type Response } from "express";
-import { db, projectsTable, projectFilesTable, eq, desc, count, sum } from "@workspace/db";
+import { db, projectsTable, projectFilesTable, teamMembersTable, eq, and, desc, count, sum, isNull, or } from "@workspace/db";
 import JSZip from "jszip";
 import { z } from "zod";
 import {
@@ -21,29 +21,39 @@ const CreateProjectBody = CreateProjectBodyBase.extend({
   prompt: z.string().max(PROMPT_MAX_LENGTH, `Prompt must be ${PROMPT_MAX_LENGTH} characters or fewer`),
   name: z.string().max(200, "Name must be 200 characters or fewer"),
   stylePreset: z.string().max(50).optional(),
+  teamId: z.number().int().positive().optional(),
 });
 import {
   resolveProvider,
   getAvailableProviders,
   DEFAULT_MODELS,
 } from "../lib/ai-client";
+import { sseSessionManager } from "../lib/sse-session";
 import { EXAMPLE_PROMPTS } from "../lib/prompt-templates";
 import { generationLimiter } from "../middleware/rate-limit";
 import { enforceQuota } from "../middleware/quota";
 import { recordGenerationRun, getProjectHistory, getProjectRuns } from "../lib/generation-history";
 import { logger } from "../lib/logger";
 import { generationService } from "../lib/generation-service";
+import { jobQueue } from "../lib/job-queue";
+import { resolveTeamAccess, hasMinRole } from "../middleware/team-auth";
 
 const router: IRouter = Router();
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 /** Checks project ownership. Returns false and sends 404 if denied. */
 function checkOwnership(
-  project: { userId: number | null },
+  project: { userId: number | null; teamId: number | null },
   req: Request,
   res: Response,
   jsonError = true,
 ): boolean {
+  // Team projects use team-based access (checked separately via checkTeamProjectAccess)
+  if (project.teamId !== null) {
+    // For non-team-aware callers, block access
+    if (jsonError) res.status(404).json({ error: "Project not found" });
+    return false;
+  }
   if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
     if (jsonError) res.status(404).json({ error: "Project not found" });
     return false;
@@ -55,18 +65,119 @@ function checkOwnership(
   return true;
 }
 
+/**
+ * Check access to a project, handling both personal and team-owned projects.
+ * Returns true if access is allowed, false otherwise (sends appropriate response).
+ * minRole: the minimum role needed for the operation (defaults to "viewer" for reads).
+ */
+async function checkProjectAccess(
+  project: { userId: number | null; teamId: number | null },
+  req: Request,
+  res: Response,
+  minRole: "owner" | "admin" | "member" | "viewer" = "viewer",
+): Promise<boolean> {
+  // Team-owned project
+  if (project.teamId !== null) {
+    const role = await resolveTeamAccess(req, project.teamId);
+    if (!role) {
+      res.status(404).json({ error: "Project not found" });
+      return false;
+    }
+    if (!hasMinRole(role, minRole)) {
+      res.status(403).json({ error: `Requires at least ${minRole} role` });
+      return false;
+    }
+    return true;
+  }
+
+  // Personal project - use existing ownership check
+  if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
+    res.status(404).json({ error: "Project not found" });
+    return false;
+  }
+  if (project.userId === null && req.user) {
+    res.status(404).json({ error: "Project not found" });
+    return false;
+  }
+  return true;
+}
+
+/**
+ * SSE-compatible version of checkProjectAccess. Sends errors via the SSE event
+ * stream instead of JSON responses (since SSE headers are already flushed).
+ * Returns true if access is allowed, false otherwise (sends error event and ends response).
+ */
+async function checkProjectAccessSSE(
+  project: { userId: number | null; teamId: number | null },
+  req: Request,
+  sendEvent: (data: object) => void,
+  res: Response,
+  minRole: "owner" | "admin" | "member" | "viewer" = "viewer",
+): Promise<boolean> {
+  // Team-owned project
+  if (project.teamId !== null) {
+    const role = await resolveTeamAccess(req, project.teamId);
+    if (!role) {
+      sendEvent({ type: "error", message: "Project not found" });
+      res.end();
+      return false;
+    }
+    if (!hasMinRole(role, minRole)) {
+      sendEvent({ type: "error", message: `Requires at least ${minRole} role` });
+      res.end();
+      return false;
+    }
+    return true;
+  }
+
+  // Personal project - use existing ownership check
+  if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
+    sendEvent({ type: "error", message: "Project not found" });
+    res.end();
+    return false;
+  }
+  if (project.userId === null && req.user) {
+    sendEvent({ type: "error", message: "Project not found" });
+    res.end();
+    return false;
+  }
+  return true;
+}
+
 /** Sets up SSE headers + heartbeat. Returns sendEvent helper and cleanup. */
-function setupSSE(res: Response) {
+function setupSSE(res: Response, opts?: { sessionId?: string; req?: Request }) {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders();
 
+  const sessionId = opts?.sessionId;
+
+  // If we have a session and a Last-Event-ID, replay missed events
+  if (sessionId && opts?.req) {
+    const lastEventIdHeader = opts.req.headers["last-event-id"];
+    if (lastEventIdHeader) {
+      const lastId = parseInt(lastEventIdHeader as string, 10);
+      if (!isNaN(lastId)) {
+        const missed = sseSessionManager.getEventsSince(sessionId, lastId);
+        for (const event of missed) {
+          res.write(`id: ${event.id}\ndata: ${JSON.stringify(event.data)}\n\n`);
+        }
+      }
+    }
+    sseSessionManager.getOrCreateSession(sessionId);
+  }
+
   const heartbeatInterval = setInterval(() => { res.write(`: heartbeat\n\n`); }, 15000);
   res.on("close", () => { clearInterval(heartbeatInterval); });
 
   const sendEvent = (data: object) => {
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
+    if (sessionId) {
+      const eventId = sseSessionManager.pushEvent(sessionId, data);
+      res.write(`id: ${eventId}\ndata: ${JSON.stringify(data)}\n\n`);
+    } else {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    }
   };
   return sendEvent;
 }
@@ -96,11 +207,28 @@ router.get("/projects", async (req, res) => {
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
     const offset = (page - 1) * limit;
-    const [totalRow] = await db.select({ count: count() }).from(projectsTable).where(eq(projectsTable.userId, req.user.id));
-    const total = totalRow.count;
-    const totalPages = Math.ceil(total / limit);
-    const projects = await db.select().from(projectsTable).where(eq(projectsTable.userId, req.user.id)).orderBy(desc(projectsTable.updatedAt)).limit(limit).offset(offset);
-    res.json({ data: projects, pagination: { page, limit, total, totalPages } });
+    const teamIdParam = req.query.team_id ? parseInt(req.query.team_id as string, 10) : null;
+
+    if (teamIdParam) {
+      // List team projects - verify membership first
+      const role = await resolveTeamAccess(req, teamIdParam);
+      if (!role) {
+        res.status(403).json({ error: "Not a member of this team" });
+        return;
+      }
+      const [totalRow] = await db.select({ count: count() }).from(projectsTable).where(eq(projectsTable.teamId, teamIdParam));
+      const total = totalRow.count;
+      const totalPages = Math.ceil(total / limit);
+      const projects = await db.select().from(projectsTable).where(eq(projectsTable.teamId, teamIdParam)).orderBy(desc(projectsTable.updatedAt)).limit(limit).offset(offset);
+      res.json({ data: projects, pagination: { page, limit, total, totalPages } });
+    } else {
+      // List personal projects only (team_id IS NULL)
+      const [totalRow] = await db.select({ count: count() }).from(projectsTable).where(and(eq(projectsTable.userId, req.user.id), isNull(projectsTable.teamId)));
+      const total = totalRow.count;
+      const totalPages = Math.ceil(total / limit);
+      const projects = await db.select().from(projectsTable).where(and(eq(projectsTable.userId, req.user.id), isNull(projectsTable.teamId))).orderBy(desc(projectsTable.updatedAt)).limit(limit).offset(offset);
+      res.json({ data: projects, pagination: { page, limit, total, totalPages } });
+    }
   } catch (err) {
     req.log.error({ err }, "Failed to list projects");
     res.status(500).json({ error: "Failed to list projects" });
@@ -110,9 +238,21 @@ router.get("/projects", async (req, res) => {
 router.post("/projects", async (req, res) => {
   try {
     const body = CreateProjectBody.parse(req.body);
+
+    // If team_id is specified, verify user is a member
+    if (body.teamId) {
+      const role = await resolveTeamAccess(req, body.teamId);
+      if (!role) {
+        res.status(403).json({ error: "Not a member of this team" });
+        return;
+      }
+    }
+
     const [project] = await db.insert(projectsTable).values({
       name: body.name, prompt: body.prompt, framework: body.framework,
-      stylePreset: body.stylePreset ?? null, status: "pending", fileCount: 0, userId: req.user?.id ?? null,
+      stylePreset: body.stylePreset ?? null, status: "pending", fileCount: 0,
+      userId: req.user?.id ?? null,
+      teamId: body.teamId ?? null,
     }).returning();
     res.status(201).json(project);
   } catch (err) {
@@ -160,7 +300,7 @@ router.get("/projects/:id", async (req, res) => {
       .from(projectsTable)
       .where(eq(projectsTable.id, id));
     if (!project) { res.status(404).json({ error: "Project not found" }); return; }
-    if (!checkOwnership(project, req, res)) return;
+    if (!(await checkProjectAccess(project, req, res, "viewer"))) return;
     res.json(project);
   } catch (err) {
     req.log.error({ err }, "Failed to get project");
@@ -176,7 +316,7 @@ router.delete("/projects/:id", async (req, res) => {
       .from(projectsTable)
       .where(eq(projectsTable.id, id));
     if (!project) { res.status(404).json({ error: "Project not found" }); return; }
-    if (!checkOwnership(project, req, res)) return;
+    if (!(await checkProjectAccess(project, req, res, "admin"))) return;
     await db.delete(projectsTable).where(eq(projectsTable.id, id));
     res.status(204).send();
   } catch (err) {
@@ -193,7 +333,7 @@ router.get("/projects/:id/files", async (req, res) => {
       .from(projectsTable)
       .where(eq(projectsTable.id, id));
     if (!project) { res.status(404).json({ error: "Project not found" }); return; }
-    if (!checkOwnership(project, req, res)) return;
+    if (!(await checkProjectAccess(project, req, res, "viewer"))) return;
     const files = await db
       .select()
       .from(projectFilesTable)
@@ -206,13 +346,58 @@ router.get("/projects/:id/files", async (req, res) => {
   }
 });
 
+const UpdateFileBody = z.object({
+  content: z.string().max(512000, "Content must be 500KB or fewer"),
+});
+
+router.put("/projects/:id/files/:fileId", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const fileId = parseInt(req.params.fileId, 10);
+    if (isNaN(id) || isNaN(fileId)) {
+      res.status(400).json({ error: "Invalid id" });
+      return;
+    }
+
+    const [project] = await db
+      .select()
+      .from(projectsTable)
+      .where(eq(projectsTable.id, id));
+    if (!project) { res.status(404).json({ error: "Project not found" }); return; }
+    if (!(await checkProjectAccess(project, req, res, "member"))) return;
+
+    const body = UpdateFileBody.parse(req.body);
+
+    const [file] = await db
+      .select()
+      .from(projectFilesTable)
+      .where(and(eq(projectFilesTable.id, fileId), eq(projectFilesTable.projectId, id)));
+    if (!file) { res.status(404).json({ error: "File not found" }); return; }
+
+    const [updated] = await db
+      .update(projectFilesTable)
+      .set({ content: body.content })
+      .where(eq(projectFilesTable.id, fileId))
+      .returning();
+
+    res.json(updated);
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      res.status(400).json({ error: "Invalid request body", details: err.issues });
+      return;
+    }
+    req.log.error({ err }, "Failed to update file");
+    res.status(500).json({ error: "Failed to update file" });
+  }
+});
+
 // ── Share routes ────────────────────────────────────────────────────────────
 router.post("/projects/:id/share", async (req, res) => {
   try {
     const { id } = GetProjectParams.parse(req.params);
     const [project] = await db.select().from(projectsTable).where(eq(projectsTable.id, id));
     if (!project) { res.status(404).json({ error: "Project not found" }); return; }
-    if (!checkOwnership(project, req, res)) return;
+    if (!(await checkProjectAccess(project, req, res, "member"))) return;
 
     let token = project.shareToken;
     if (!token) {
@@ -242,12 +427,27 @@ router.get("/share/:token", async (req, res) => {
 });
 
 // ── Preview routes ──────────────────────────────────────────────────────────
-function sendPreviewHtml(res: Response, html: string) {
+import crypto from "node:crypto";
+
+function sendPreviewHtml(res: Response, html: string, opts?: { completed?: boolean }) {
+  const isCompleted = opts?.completed ?? false;
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com; style-src 'unsafe-inline' https://cdn.tailwindcss.com https://fonts.googleapis.com; font-src https://fonts.gstatic.com data:; img-src data: blob: https:; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'");
   res.setHeader("X-Frame-Options", "SAMEORIGIN");
   res.setHeader("Referrer-Policy", "no-referrer");
-  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Vary", "Accept-Encoding");
+
+  if (isCompleted) {
+    // Completed projects can be cached by CDN and browser
+    const etag = `"${crypto.createHash("md5").update(html).digest("hex")}"`;
+    res.setHeader("ETag", etag);
+    res.setHeader("Cache-Control", "public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800");
+    res.setHeader("Surrogate-Control", "max-age=86400");
+  } else {
+    // Projects still generating should not be cached
+    res.setHeader("Cache-Control", "no-store");
+  }
+
   res.send(html);
 }
 
@@ -260,11 +460,22 @@ router.get("/projects/:id/preview", async (req, res) => {
       return;
     }
     const [project] = await db.select().from(projectsTable).where(eq(projectsTable.id, id)).limit(1);
-    if (!project || !checkOwnership(project, req, res, false) || !project.livePreviewHtml) {
+    if (!project || !project.livePreviewHtml) {
       res.status(404).type("text/html").send(noPreviewHtml);
       return;
     }
-    sendPreviewHtml(res, project.livePreviewHtml);
+    // Check access for team or personal projects
+    if (project.teamId !== null) {
+      const role = await resolveTeamAccess(req, project.teamId);
+      if (!role) {
+        res.status(404).type("text/html").send(noPreviewHtml);
+        return;
+      }
+    } else if (!checkOwnership(project, req, res, false)) {
+      res.status(404).type("text/html").send(noPreviewHtml);
+      return;
+    }
+    sendPreviewHtml(res, project.livePreviewHtml, { completed: project.status === "complete" });
   } catch (err) {
     req.log.error({ err }, "Failed to load project preview");
     res.status(500).json({ error: "Failed to load preview" });
@@ -279,7 +490,7 @@ router.get("/share/:token/preview", async (req, res) => {
       res.status(404).type("text/html").send("<!doctype html><meta charset=utf-8><title>No preview</title><body style=\"font-family:-apple-system,sans-serif;background:#000;color:#888;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;padding:1rem;font-size:13px;\">Preview not available.</body>");
       return;
     }
-    sendPreviewHtml(res, project.livePreviewHtml);
+    sendPreviewHtml(res, project.livePreviewHtml, { completed: project.status === "complete" });
   } catch (err) {
     req.log.error({ err }, "Failed to load shared preview");
     res.status(500).json({ error: "Failed to load preview" });
@@ -292,7 +503,7 @@ router.get("/projects/:id/download", async (req, res) => {
     const { id } = GetProjectParams.parse(req.params);
     const [project] = await db.select().from(projectsTable).where(eq(projectsTable.id, id));
     if (!project) { res.status(404).json({ error: "Project not found" }); return; }
-    if (!checkOwnership(project, req, res)) return;
+    if (!(await checkProjectAccess(project, req, res, "viewer"))) return;
 
     const files = await db.select().from(projectFilesTable).where(eq(projectFilesTable.projectId, id)).orderBy(projectFilesTable.filepath);
     if (files.length === 0) { res.status(404).json({ error: "No files to download" }); return; }
@@ -320,7 +531,8 @@ router.post("/projects/:id/generate", generationLimiter, enforceQuota, async (re
   const additionalContext = body.success ? body.data.additionalContext ?? null : null;
   const provider = resolveProvider((req.query as Record<string, string>).provider);
 
-  const sendEvent = setupSSE(res);
+  const sessionId = `gen-${id}-${Date.now()}`;
+  const sendEvent = setupSSE(res, { sessionId, req });
 
   try {
     const [project] = await db
@@ -329,12 +541,7 @@ router.post("/projects/:id/generate", generationLimiter, enforceQuota, async (re
       .where(eq(projectsTable.id, id));
 
     if (!project) { sendEvent({ error: "Project not found" }); res.end(); return; }
-    if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
-      sendEvent({ error: "Project not found" }); res.end(); return;
-    }
-    if (project.userId === null && req.user) {
-      sendEvent({ error: "Project not found" }); res.end(); return;
-    }
+    if (!(await checkProjectAccessSSE(project, req, sendEvent, res, "member"))) return;
 
     if (project.status === "generating") {
       const staleCutoff = new Date(Date.now() - 5 * 60 * 1000);
@@ -355,6 +562,16 @@ router.post("/projects/:id/generate", generationLimiter, enforceQuota, async (re
       .set({ status: "generating" })
       .where(eq(projectsTable.id, id));
     sendEvent({ type: "status", status: "generating" });
+    sendEvent({ type: "session", sessionId });
+
+    // Record a job for crash recovery before starting generation
+    const job = await jobQueue.enqueue({
+      projectId: id,
+      userId: req.user?.id ?? null,
+      provider,
+      payload: { phase: "planning", additionalContext, framework: project.framework },
+    });
+    sendEvent({ type: "job_created", jobId: job.id });
 
     sendEvent({ type: "clarify_check", message: "Checking prompt for ambiguity..." });
     const clarify = await generationService.detectClarifications(project.prompt, frameworkName, provider);
@@ -369,6 +586,7 @@ router.post("/projects/:id/generate", generationLimiter, enforceQuota, async (re
         .where(eq(projectsTable.id, id));
       sendEvent({ type: "clarify_questions", questions: clarify.questions });
       sendEvent({ type: "awaiting_clarification", questions: clarify.questions });
+      await jobQueue.complete(job.id);
       res.end();
       return;
     }
@@ -391,6 +609,8 @@ router.post("/projects/:id/generate", generationLimiter, enforceQuota, async (re
       provider,
       stylePresetId: project.stylePreset ?? null,
     });
+    // Mark the crash-recovery job as completed
+    await jobQueue.complete(job.id);
     return;
   } catch (err) {
     req.log.error({ err }, "Generation failed");
@@ -421,7 +641,8 @@ router.post("/projects/:id/answer-clarifications", async (req, res) => {
   }
 
   const { answers, additionalContext, skip } = body.data;
-  const sendEvent = setupSSE(res);
+  const sessionId = `clarify-${id}-${Date.now()}`;
+  const sendEvent = setupSSE(res, { sessionId, req });
 
   try {
     const [project] = await db
@@ -430,12 +651,7 @@ router.post("/projects/:id/answer-clarifications", async (req, res) => {
       .where(eq(projectsTable.id, id));
 
     if (!project) { sendEvent({ type: "error", message: "Project not found" }); res.end(); return; }
-    if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
-      sendEvent({ type: "error", message: "Project not found" }); res.end(); return;
-    }
-    if (project.userId === null && req.user) {
-      sendEvent({ type: "error", message: "Project not found" }); res.end(); return;
-    }
+    if (!(await checkProjectAccessSSE(project, req, sendEvent, res, "member"))) return;
 
     const frameworkName = project.framework === "swiftui" ? "SwiftUI" : "UIKit";
     const cleanedAnswers = (answers ?? []).map(a => ({
@@ -490,7 +706,8 @@ router.post("/projects/:id/approve-plan", generationLimiter, enforceQuota, async
 
   const { plan: approvedPlan, additionalContext } = body.data;
   const provider = resolveProvider((req.query as Record<string, string>).provider);
-  const sendEvent = setupSSE(res);
+  const sessionId = `approve-${id}-${Date.now()}`;
+  const sendEvent = setupSSE(res, { sessionId, req });
 
   try {
     const [project] = await db
@@ -499,12 +716,7 @@ router.post("/projects/:id/approve-plan", generationLimiter, enforceQuota, async
       .where(eq(projectsTable.id, id));
 
     if (!project) { sendEvent({ type: "error", message: "Project not found" }); res.end(); return; }
-    if (project.userId !== null && (!req.user || req.user.id !== project.userId)) {
-      sendEvent({ type: "error", message: "Project not found" }); res.end(); return;
-    }
-    if (project.userId === null && req.user) {
-      sendEvent({ type: "error", message: "Project not found" }); res.end(); return;
-    }
+    if (!(await checkProjectAccessSSE(project, req, sendEvent, res, "member"))) return;
 
     if (project.status === "generating") {
       const staleCutoff = new Date(Date.now() - 5 * 60 * 1000);
@@ -523,6 +735,14 @@ router.post("/projects/:id/approve-plan", generationLimiter, enforceQuota, async
       .set({ status: "generating", architecturePlan: JSON.stringify(approvedPlan) })
       .where(eq(projectsTable.id, id));
 
+    // Record a job for crash recovery before starting code generation
+    const job = await jobQueue.enqueue({
+      projectId: id,
+      userId: req.user?.id ?? null,
+      provider,
+      payload: { phase: "code_generation", plan: approvedPlan, additionalContext: additionalContext ?? null },
+    });
+
     await generationService.runCodeGeneration(res, sendEvent, req.log, {
       projectId: id,
       approvedPlan,
@@ -530,6 +750,9 @@ router.post("/projects/:id/approve-plan", generationLimiter, enforceQuota, async
       provider,
       userId: req.user?.id,
     });
+
+    // Mark the crash-recovery job as completed
+    await jobQueue.complete(job.id);
   } catch (err) {
     req.log.error({ err }, "Approve-plan phase 2 generation failed");
     try {
@@ -559,7 +782,7 @@ router.get("/projects/:id/history", async (req, res) => {
       .where(eq(projectsTable.id, id));
 
     if (!project) { res.status(404).json({ error: "Project not found" }); return; }
-    if (!checkOwnership(project, req, res)) return;
+    if (!(await checkProjectAccess(project, req, res, "viewer"))) return;
 
     const revisions = await getProjectHistory(id);
     res.json(revisions);
@@ -580,7 +803,7 @@ router.get("/projects/:id/runs", async (req, res) => {
       .where(eq(projectsTable.id, id));
 
     if (!project) { res.status(404).json({ error: "Project not found" }); return; }
-    if (!checkOwnership(project, req, res)) return;
+    if (!(await checkProjectAccess(project, req, res, "viewer"))) return;
 
     const runs = await getProjectRuns(id);
     res.json(runs);

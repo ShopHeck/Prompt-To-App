@@ -81,6 +81,11 @@ export interface ProjectFile {
   createdAt: string;
 }
 
+export interface UpdateFileBody {
+  /** @maxLength 512000 */
+  content: string;
+}
+
 export interface GenerateAppBody {
   /** @nullable */
   additionalContext?: string | null;
@@ -135,6 +140,185 @@ export interface AnswerClarificationsBody {
   additionalContext?: string | null;
 }
 
+export type ReadinessResponseStatus =
+  (typeof ReadinessResponseStatus)[keyof typeof ReadinessResponseStatus];
+
+export const ReadinessResponseStatus = {
+  ready: "ready",
+  degraded: "degraded",
+} as const;
+
+export type ReadinessResponseChecks = { [key: string]: "ok" | "error" };
+
+export type ReadinessResponseMetricsStatusCodes = { [key: string]: number };
+
+export type ReadinessResponseMetrics = {
+  totalRequests: number;
+  totalErrors: number;
+  statusCodes: ReadinessResponseMetricsStatusCodes;
+  avgResponseTimeMs: number;
+  p95ResponseTimeMs: number;
+};
+
+export type ReadinessResponseMemory = {
+  rss: number;
+  heapUsed: number;
+  heapTotal: number;
+};
+
+export interface ReadinessResponse {
+  status: ReadinessResponseStatus;
+  checks: ReadinessResponseChecks;
+  uptime: number;
+  version: string;
+  environment: string;
+  sentry: boolean;
+  metrics: ReadinessResponseMetrics;
+  memory: ReadinessResponseMemory;
+}
+
+export interface RegisterBody {
+  email: string;
+  /** @minLength 8 */
+  password: string;
+  displayName?: string;
+}
+
+export interface LoginBody {
+  email: string;
+  password: string;
+}
+
+export interface ChangePasswordBody {
+  currentPassword: string;
+  /** @minLength 8 */
+  newPassword: string;
+}
+
+export type AuthUserPlan = (typeof AuthUserPlan)[keyof typeof AuthUserPlan];
+
+export const AuthUserPlan = {
+  free: "free",
+  pro: "pro",
+  studio: "studio",
+} as const;
+
+export interface AuthUser {
+  id: number;
+  email: string;
+  /** @nullable */
+  displayName: string | null;
+  plan: AuthUserPlan;
+}
+
+export interface AuthResponse {
+  user: AuthUser;
+}
+
+export interface Quota {
+  used: number;
+  limit: number;
+  resetsAt: string;
+}
+
+export interface MeResponse {
+  user: AuthUser;
+  quota?: Quota;
+}
+
+export interface PlanInfo {
+  name: string;
+  price: string;
+  features: string[];
+}
+
+export type PlansResponsePlans = { [key: string]: PlanInfo };
+
+export interface PlansResponse {
+  plans: PlansResponsePlans;
+}
+
+export type CheckoutBodyPlan =
+  (typeof CheckoutBodyPlan)[keyof typeof CheckoutBodyPlan];
+
+export const CheckoutBodyPlan = {
+  pro: "pro",
+  studio: "studio",
+} as const;
+
+export interface CheckoutBody {
+  plan: CheckoutBodyPlan;
+}
+
+export interface SubscriptionResponse {
+  plan: string;
+  status: string;
+  /** @nullable */
+  currentPeriodEnd?: string | null;
+  usage: number;
+  planDetails: PlanInfo;
+}
+
+export interface ProviderModels {
+  planner: string;
+  engineer: string;
+  reviewer: string;
+}
+
+export type ProvidersResponseModels = { [key: string]: ProviderModels };
+
+export interface ProvidersResponse {
+  providers: string[];
+  /** @nullable */
+  default: string | null;
+  models: ProvidersResponseModels;
+}
+
+export interface PromptTemplate {
+  label: string;
+  category: string;
+  tagline: string;
+  signature: string;
+  screens: string[];
+  accent: string;
+  emoji: string;
+  prompt: string;
+}
+
+export interface RefineBody {
+  /** @minLength 1 */
+  instruction: string;
+}
+
+export type RefinementMessageRole =
+  (typeof RefinementMessageRole)[keyof typeof RefinementMessageRole];
+
+export const RefinementMessageRole = {
+  user: "user",
+  assistant: "assistant",
+} as const;
+
+export interface RefinementMessage {
+  id: number;
+  projectId: number;
+  role: RefinementMessageRole;
+  content: string;
+  /** @nullable */
+  filesChanged?: string[] | null;
+  createdAt: string;
+}
+
+export type RefineResultFilesItem = {
+  path: string;
+  content: string;
+};
+
+export interface RefineResult {
+  summary: string;
+  filesChanged: string[];
+  files?: RefineResultFilesItem[];
+}
+
 export type ProjectStatsFrameworkBreakdown = {
   swiftui: number;
   uikit: number;
@@ -156,3 +340,25 @@ export interface SharedProject {
   project: Project;
   files: ProjectFile[];
 }
+
+export type Logout200 = {
+  ok: boolean;
+};
+
+export type ChangePassword200 = {
+  ok: boolean;
+};
+
+export type CreateCheckout200 = {
+  url: string;
+};
+
+export type CreatePortal200 = {
+  url: string;
+};
+
+export type StripeWebhookBody = { [key: string]: unknown };
+
+export type StripeWebhook200 = {
+  received: boolean;
+};
