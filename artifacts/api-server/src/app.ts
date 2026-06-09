@@ -1,4 +1,4 @@
-import express, { type Express } from "express";
+import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import pinoHttp from "pino-http";
@@ -35,9 +35,7 @@ app.use(
     },
   }),
 );
-app.use(cors({ origin: corsOrigin, credentials: true }));
-
-// Serve frontend static files in production (before body parsers and auth)
+// Serve frontend static files in production (before CORS so same-origin requests are not affected)
 const publicDir = path.resolve(import.meta.dirname, "..", "public");
 if (fs.existsSync(publicDir)) {
   app.use(express.static(publicDir, {
@@ -54,7 +52,20 @@ if (fs.existsSync(publicDir)) {
       }
     },
   }));
+
+  // SPA catch-all: serve index.html for non-API GET requests (before CORS/auth)
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    if (req.method === "GET" && !req.path.startsWith("/api")) {
+      res.setHeader("Cache-Control", "public, max-age=300, s-maxage=600, stale-while-revalidate=86400");
+      res.setHeader("Surrogate-Control", "max-age=600");
+      res.sendFile(path.join(publicDir, "index.html"));
+    } else {
+      next();
+    }
+  });
 }
+
+app.use(cors({ origin: corsOrigin, credentials: true }));
 
 app.use(cookieParser());
 // Raw body for Stripe webhook signature verification
@@ -66,15 +77,6 @@ app.use(express.urlencoded({ extended: true }));
 app.use(csrfProtection);
 app.use(authMiddleware);
 app.use("/api", apiLimiter, router);
-
-// SPA catch-all: after API routes so /api/* is not intercepted, before errorHandler
-if (fs.existsSync(publicDir)) {
-  app.get("/{*splat}", (_req, res) => {
-    res.setHeader("Cache-Control", "public, max-age=300, s-maxage=600, stale-while-revalidate=86400");
-    res.setHeader("Surrogate-Control", "max-age=600");
-    res.sendFile(path.join(publicDir, "index.html"));
-  });
-}
 
 app.use(errorHandler);
 
