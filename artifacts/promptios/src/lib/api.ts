@@ -1,10 +1,21 @@
 const BASE = "/api";
 
+function getCsrfToken(): string | undefined {
+  const match = document.cookie.match(/(?:^|;\s*)pta_csrf=([^;]*)/);
+  return match?.[1];
+}
+
 async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  const csrfToken = getCsrfToken();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(csrfToken ? { "x-csrf-token": csrfToken } : {}),
+    ...(opts.headers as Record<string, string> ?? {}),
+  };
   const res = await fetch(`${BASE}${path}`, {
     credentials: "include",
-    headers: { "Content-Type": "application/json", ...opts.headers },
     ...opts,
+    headers,
   });
 
   if (!res.ok) {
