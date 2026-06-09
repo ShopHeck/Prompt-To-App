@@ -537,12 +537,19 @@ router.post("/projects/:id/generate", generationLimiter, enforceQuota, async (re
   const { id } = GenerateAppParams.parse(req.params);
   const body = GenerateAppBody.safeParse(req.body);
   const additionalContext = body.success ? body.data.additionalContext ?? null : null;
-  const provider = resolveProvider((req.query as Record<string, string>).provider);
 
   const sessionId = `gen-${id}-${Date.now()}`;
   const sendEvent = setupSSE(res, { sessionId, req });
 
   try {
+    let provider;
+    try {
+      provider = resolveProvider((req.query as Record<string, string>).provider);
+    } catch (_providerErr) {
+      sendEvent({ type: "error", message: "No AI provider configured. Set OPENAI_API_KEY, GEMINI_API_KEY, or ANTHROPIC_API_KEY in your environment variables." });
+      res.end();
+      return;
+    }
     const [project] = await db
       .select()
       .from(projectsTable)
@@ -713,11 +720,19 @@ router.post("/projects/:id/approve-plan", generationLimiter, enforceQuota, async
   }
 
   const { plan: approvedPlan, additionalContext } = body.data;
-  const provider = resolveProvider((req.query as Record<string, string>).provider);
   const sessionId = `approve-${id}-${Date.now()}`;
   const sendEvent = setupSSE(res, { sessionId, req });
 
+  let provider: ReturnType<typeof resolveProvider> | undefined;
   try {
+    try {
+      provider = resolveProvider((req.query as Record<string, string>).provider);
+    } catch (_providerErr) {
+      sendEvent({ type: "error", message: "No AI provider configured. Set OPENAI_API_KEY, GEMINI_API_KEY, or ANTHROPIC_API_KEY in your environment variables." });
+      res.end();
+      return;
+    }
+
     const [project] = await db
       .select()
       .from(projectsTable)
