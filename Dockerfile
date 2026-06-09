@@ -44,7 +44,7 @@ RUN groupadd --gid 1001 appuser && \
 
 WORKDIR /app
 COPY --from=api-build /app /app
-COPY --from=frontend-build /app/artifacts/promptios/dist/public ./artifacts/api-server/dist/public
+COPY --from=frontend-build /app/artifacts/promptios/dist/public ./artifacts/api-server/public
 
 # DB migration files needed at runtime
 COPY lib/db/migrations/ lib/db/migrations/
