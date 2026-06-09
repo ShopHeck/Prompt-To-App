@@ -13,6 +13,11 @@ const CATEGORY_COLORS: Record<string, string> = {
   Productivity: "bg-amber-500/10 text-amber-400 border-amber-500/20",
   Creative: "bg-rose-500/10 text-rose-400 border-rose-500/20",
   Health: "bg-teal-500/10 text-teal-400 border-teal-500/20",
+  Finance: "bg-green-500/10 text-green-400 border-green-500/20",
+  Utility: "bg-orange-500/10 text-orange-400 border-orange-500/20",
+  Social: "bg-fuchsia-500/10 text-fuchsia-400 border-fuchsia-500/20",
+  Education: "bg-indigo-500/10 text-indigo-400 border-indigo-500/20",
+  Lifestyle: "bg-cyan-500/10 text-cyan-400 border-cyan-500/20",
 };
 
 export default function TemplatesPage() {
