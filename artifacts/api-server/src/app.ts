@@ -48,7 +48,7 @@ app.use(authMiddleware);
 app.use("/api", apiLimiter, router);
 
 // Serve frontend static files in production
-const publicDir = path.resolve(import.meta.dirname, "public");
+const publicDir = path.resolve(import.meta.dirname, "..", "public");
 if (fs.existsSync(publicDir)) {
   app.use(express.static(publicDir, {
     maxAge: "1y",
