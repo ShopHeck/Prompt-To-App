@@ -5,6 +5,12 @@
  * custom header handling (Last-Event-ID on reconnect).
  */
 
+function getCsrfToken(): string | undefined {
+  if (typeof document === "undefined") return undefined;
+  const match = document.cookie.match(/(?:^|;\s*)pta_csrf=([^;]*)/);
+  return match?.[1];
+}
+
 export type SSEConnectionState = "connecting" | "connected" | "reconnecting" | "disconnected";
 
 export interface SSEClientOptions {
@@ -105,6 +111,14 @@ export class SSEClient {
       "Content-Type": "application/json",
       ...(this.opts.headers ?? {}),
     };
+
+    // Include CSRF token for state-changing requests
+    if (this.opts.method === "POST") {
+      const csrfToken = getCsrfToken();
+      if (csrfToken) {
+        headers["x-csrf-token"] = csrfToken;
+      }
+    }
 
     // Send Last-Event-ID on reconnection
     if (this.lastEventId) {
