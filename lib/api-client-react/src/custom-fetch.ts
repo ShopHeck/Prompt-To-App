@@ -11,6 +11,12 @@ export type AuthTokenGetter = () => Promise<string | null> | string | null;
 const NO_BODY_STATUS = new Set([204, 205, 304]);
 const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
 
+function getCsrfToken(): string | undefined {
+  if (typeof document === "undefined") return undefined;
+  const match = document.cookie.match(/(?:^|;\s*)pta_csrf=([^;]*)/);
+  return match?.[1];
+}
+
 // ---------------------------------------------------------------------------
 // Module-level configuration
 // ---------------------------------------------------------------------------
@@ -358,9 +364,18 @@ export async function customFetch<T = unknown>(
     }
   }
 
+  // Attach CSRF token for state-changing requests (double-submit cookie pattern)
+  const stateChangingMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+  if (stateChangingMethods.has(method) && !headers.has("x-csrf-token")) {
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      headers.set("x-csrf-token", csrfToken);
+    }
+  }
+
   const requestInfo = { method, url: resolveUrl(input) };
 
-  const response = await fetch(input, { ...init, method, headers });
+  const response = await fetch(input, { ...init, method, headers, credentials: "include" });
 
   if (!response.ok) {
     const errorData = await parseErrorBody(response, method);
