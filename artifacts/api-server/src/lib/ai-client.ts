@@ -170,7 +170,10 @@ export async function callWithFallback(
   try {
     return await callAI(opts);
   } catch (err) {
-    if (err instanceof AIError && err.retryable && fallbackModel !== opts.model) {
+    // Fall back on retryable provider errors AND on request timeouts (408) —
+    // the fallback model is typically smaller/faster, so a prompt that timed
+    // out on the primary often completes on it.
+    if (err instanceof AIError && (err.retryable || err.status === 408) && fallbackModel !== opts.model) {
       onFallback?.(`Switching to fallback model (${fallbackModel})...`);
       return await callAI({ ...opts, model: fallbackModel, maxRetries: 2 });
     }

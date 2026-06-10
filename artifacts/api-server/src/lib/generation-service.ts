@@ -316,30 +316,15 @@ Produce the JSON architecture plan now.`;
 
     const repairHistory: Array<{ at: string; targets: string[]; before: AccuracyReport; after: AccuracyReport }> = [];
 
-    // ── Deterministic lint pass (SwiftUI only) ──────────────────────────────
-    // Catches deprecated APIs / stubs with zero AI cost and feeds verified
-    // defects into the repair targets alongside the AI accuracy report.
-    let lintReport: LintReport | null = null;
-    if (project.framework === "swiftui") {
-      lintReport = lintSwiftFiles(filesToInsert);
-      if (lintReport.findings.length > 0) {
-        reqLog.info?.(
-          { findingCount: lintReport.findings.length, files: lintReport.filesWithIssues },
-          "Static lint found issues in generated Swift files",
-        );
-        sendEvent({
-          type: "lint_report",
-          findingCount: lintReport.findings.length,
-          filesWithIssues: lintReport.filesWithIssues,
-        });
-      }
-    }
-
-    // ── Single repair pass if issues found (iOS targets only for now) ───────
-    const lintTargets = lintReport ? collectLintRepairTargets(lintReport) : [];
-    const repairTargets = Array.from(new Set([...collectRepairTargets(report), ...lintTargets])).slice(0, 10);
-    const lintNotes = lintReport && lintReport.findings.length > 0 ? formatLintNotes(lintReport) : null;
-    if (repairTargets.length > 0 && (project.framework === "swiftui" || project.framework === "uikit")) {
+    // ── Iterative repair loop (iOS targets only for now) ────────────────────
+    // A single capped pass cannot recover a badly off-plan build (e.g. 26
+    // defective items with a 10-file cap). Run up to REPAIR_MAX_PASSES,
+    // re-linting and re-targeting after each accepted pass, and stop early
+    // when the score reaches the target or stops improving.
+    const REPAIR_MAX_PASSES = 2;
+    const REPAIR_SCORE_TARGET = 75;
+    const REPAIR_TARGETS_PER_PASS = 12;
+    if (project.framework === "swiftui" || project.framework === "uikit") {
       const frameworkName = project.framework === "swiftui" ? "SwiftUI" : "UIKit";
       const rawTarget = project.name.replace(/[^a-zA-Z0-9]/g, "");
       const appTargetName = rawTarget.length === 0
@@ -349,26 +334,73 @@ Produce the JSON architecture plan now.`;
           : rawTarget;
       const validDeps = this.sanitizeDependencies(approvedPlan.spmDependencies ?? []);
 
-      const repairResult = await this.runRepairPhase(
-        reqLog,
-        sendEvent,
-        projectId,
-        appTargetName,
-        frameworkName,
-        promptForValidation,
-        approvedPlan,
-        filesToInsert,
-        repairTargets,
-        report,
-        project.name,
-        validDeps,
-        provider,
-        lintNotes,
-      );
-      if (repairResult) {
+      let currentFiles = filesToInsert;
+      for (let pass = 1; pass <= REPAIR_MAX_PASSES; pass++) {
+        if (report.overallScore >= REPAIR_SCORE_TARGET) break;
+
+        // Deterministic lint pass (SwiftUI only): catches deprecated APIs /
+        // stubs with zero AI cost and feeds verified defects into the repair
+        // targets alongside the AI accuracy report.
+        let lintReport: LintReport | null = null;
+        if (project.framework === "swiftui") {
+          lintReport = lintSwiftFiles(currentFiles);
+          if (lintReport.findings.length > 0) {
+            reqLog.info?.(
+              { pass, findingCount: lintReport.findings.length, files: lintReport.filesWithIssues },
+              "Static lint found issues in generated Swift files",
+            );
+            sendEvent({
+              type: "lint_report",
+              pass,
+              findingCount: lintReport.findings.length,
+              filesWithIssues: lintReport.filesWithIssues,
+            });
+          }
+        }
+
+        const lintTargets = lintReport ? collectLintRepairTargets(lintReport) : [];
+        const repairTargets = Array.from(new Set([...collectRepairTargets(report), ...lintTargets]))
+          .slice(0, REPAIR_TARGETS_PER_PASS);
+        if (repairTargets.length === 0) break;
+        const lintNotes = lintReport && lintReport.findings.length > 0 ? formatLintNotes(lintReport) : null;
+
+        const scoreBefore = report.overallScore;
+        const repairResult = await this.runRepairPhase(
+          reqLog,
+          sendEvent,
+          projectId,
+          appTargetName,
+          frameworkName,
+          promptForValidation,
+          approvedPlan,
+          currentFiles,
+          repairTargets,
+          report,
+          project.name,
+          validDeps,
+          provider,
+          lintNotes,
+        );
+        if (!repairResult) break;
         report = repairResult.report;
         finalFileCount = repairResult.finalFileCount;
         repairHistory.push(...repairResult.history);
+
+        // Stop when the pass produced no measurable improvement.
+        if (report.overallScore <= scoreBefore) break;
+
+        // Refresh the working file set for the next pass.
+        const rows = await db
+          .select()
+          .from(projectFilesTable)
+          .where(eq(projectFilesTable.projectId, projectId));
+        currentFiles = rows.map((r) => ({
+          projectId,
+          filename: r.filename,
+          filepath: r.filepath,
+          content: r.content,
+          language: r.language,
+        }));
       }
     }
 
@@ -683,7 +715,7 @@ REAL-TIME / SENSOR APPS (fitness, location, timer, audio):
 
 Other rules:
 - screens.purpose and fileList.purpose should be specific and visually-grounded ("Hero card with current city, glassy translucent header, hourly scroll strip below" — not "shows weather"). For engine files, be explicit: "ChessEngine.swift — complete move generation for all piece types, check/checkmate/stalemate detection, en passant, castling, promotion".
-- Aim for 12-18 Swift files total. Fewer than 10 is almost never enough for studio-grade.
+- Aim for 12-18 Swift files total. Fewer than 10 is almost never enough for studio-grade; NEVER plan more than 18 — the engineer must generate every planned file completely in one pass, so an oversized fileList forces merged or truncated output. Consolidate small related models into one file at PLANNING time if needed to stay within 18.
 - spmDependencies must be an array of objects. Each object must include ALL of these fields:
     "url": the full GitHub URL of the Swift package (e.g. "https://github.com/Alamofire/Alamofire")
     "packageName": the Swift package identity (e.g. "Alamofire")

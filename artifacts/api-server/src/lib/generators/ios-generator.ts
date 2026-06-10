@@ -310,7 +310,8 @@ CODE QUALITY (non-negotiable for SwiftUI):
 - Keep view bodies readable: extract subviews when nesting exceeds ~3 levels, and prefer many small views over giant ones.
 
 GENERAL RULES:
-- Generate 12-18 Swift files. Fewer than 10 is disqualifying. Each file should be 30-150 lines, dense and well-factored. Engine files (game logic, AI) may be longer if needed to be complete — never truncate working logic to hit a line limit.
+- Generate EVERY file in the planned fileList above, using the EXACT planned filenames — one output file per planned filename. Do NOT merge planned files into combined files (no collapsing planned model files into one Models.swift, planned view models into one ViewModels.swift, or planned components into one Components.swift). The accuracy validator marks every planned filename that is absent as MISSING, so merging directly tanks the score. You may add a small number of extra helper files beyond the plan when genuinely needed.
+- Each file should be 30-150 lines, dense and well-factored. Engine files (game logic, AI) may be longer if needed to be complete — never truncate working logic to hit a line limit.
 - For UIKit: programmatic Auto Layout, no Storyboards. Same design-system + state + accessibility expectations apply (UIColor extensions, UIFont extensions, etc.).
 - If the app uses Camera, Microphone, Location, Contacts, Photos, HealthKit, or any privacy-sensitive API, add a comment at the top of the relevant Swift file: \`// REQUIRES Info.plist key: NSCameraUsageDescription = "<reason>"\` (the user reads README.md for what to add).
 - All filepaths must use the ${appTargetName}/ prefix (e.g. "${appTargetName}/ContentView.swift", "${appTargetName}/Components/PrimaryButton.swift").

@@ -87,6 +87,17 @@ describe("lintSwiftFiles", () => {
     expect(report.findings[0].rule).toBe("haptic-generator");
   });
 
+  it("flags non-private @State but not @State private", () => {
+    const report = lintSwiftFiles([
+      file(
+        "StateView.swift",
+        ["@State var exposed = 0", "@State private var hidden = 0", "@FocusState var focus: Bool"].join("\n"),
+      ),
+    ]);
+    const stateFindings = report.findings.filter(f => f.rule === "state-not-private");
+    expect(stateFindings.map(f => f.line)).toEqual([1, 3]);
+  });
+
   it("ignores non-Swift files and Package.swift", () => {
     const report = lintSwiftFiles([
       file("README.md", "NavigationView"),
