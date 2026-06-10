@@ -405,11 +405,15 @@ async function callAnthropic(opts: AICallOptions, signal: AbortSignal): Promise<
   const apiKey = getApiKey("anthropic");
   if (!apiKey) throw new AIError("anthropic", 401, "ANTHROPIC_API_KEY not configured");
 
+  const messages = buildAnthropicMessages(opts);
+  const prefilled = messages[messages.length - 1]?.role === "assistant"
+    ? messages[messages.length - 1].content
+    : "";
   const body: Record<string, unknown> = {
     model: opts.model,
     max_tokens: opts.maxTokens ?? 8192,
     system: [{ type: "text", text: opts.system, cache_control: { type: "ephemeral" } }],
-    messages: buildAnthropicMessages(opts),
+    messages,
   };
 
   const resp = await fetch("https://api.anthropic.com/v1/messages", {
@@ -436,7 +440,7 @@ async function callAnthropic(opts: AICallOptions, signal: AbortSignal): Promise<
   const text = data.content.filter((b) => b.type === "text").map((b) => b.text ?? "").join("").trim();
   if (!text) throw new AIError("anthropic", 200, "empty response from Anthropic");
   return {
-    content: text,
+    content: prefilled + text,
     model: data.model,
     finishReason: data.stop_reason ?? null,
     usage: data.usage ? { promptTokens: data.usage.input_tokens, completionTokens: data.usage.output_tokens } : undefined,
@@ -450,6 +454,12 @@ function buildAnthropicMessages(opts: AICallOptions) {
   if (opts.extraMessages) {
     messages.push(...opts.extraMessages);
   }
+  // Anthropic has no native JSON mode — emulate it with an assistant prefill
+  // so the model is forced to continue a JSON object. The "{" is prepended
+  // back onto the response by the callers below.
+  if (opts.responseFormat === "json" && messages[messages.length - 1]?.role !== "assistant") {
+    messages.push({ role: "assistant", content: "{" });
+  }
   return messages;
 }
 
@@ -457,11 +467,15 @@ async function* streamAnthropic(opts: AICallOptions, signal: AbortSignal): Async
   const apiKey = getApiKey("anthropic");
   if (!apiKey) throw new AIError("anthropic", 401, "ANTHROPIC_API_KEY not configured");
 
+  const messages = buildAnthropicMessages(opts);
+  const prefilled = messages[messages.length - 1]?.role === "assistant"
+    ? messages[messages.length - 1].content
+    : "";
   const body: Record<string, unknown> = {
     model: opts.model,
     max_tokens: opts.maxTokens ?? 8192,
     system: [{ type: "text", text: opts.system, cache_control: { type: "ephemeral" } }],
-    messages: buildAnthropicMessages(opts),
+    messages,
     stream: true,
   };
 
@@ -481,6 +495,7 @@ async function* streamAnthropic(opts: AICallOptions, signal: AbortSignal): Async
     throw new AIError("anthropic", resp.status, parseProviderError(resp.status, raw));
   }
 
+  if (prefilled) yield { content: prefilled, finishReason: null };
   yield* parseAnthropicSSE(resp);
 }
 

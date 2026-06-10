@@ -1,5 +1,6 @@
 import vm from "node:vm";
 import { callAI, callWithFallback, DEFAULT_MODELS, FALLBACK_MODELS, type Provider, type AICallOptions } from "./ai-client";
+import { extractJson, tryExtractJson } from "./json-extract";
 import { IOS_QUALITY_STANDARDS } from "./ios-quality-standards";
 import type {
   ArchitecturePlan,
@@ -128,10 +129,7 @@ Produce the JSON report now.`;
       { provider, model: models.reviewer, system: systemPrompt, userMessage, maxTokens: 2400 },
       fallbacks.reviewer,
     );
-    const raw = result.content;
-    const match = raw.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error("No JSON in validation response");
-    const parsed = JSON.parse(match[0]) as AccuracyReport;
+    const parsed = extractJson<AccuracyReport>(result.content);
     if (!Array.isArray(parsed.items)) throw new Error("Missing items array");
     const score = typeof parsed.overallScore === "number" ? Math.max(0, Math.min(100, Math.round(parsed.overallScore))) : 0;
     return {
@@ -178,6 +176,7 @@ export async function runRepairPass(
   existingFiles: Array<{ filename: string; filepath: string; content: string; language: string }>,
   targets: string[],
   provider: Provider = "openai",
+  lintNotes: string | null = null,
 ): Promise<Array<{ filename: string; filepath: string; content: string; language: string }>> {
   const existingSummary = existingFiles
     .map(f => `- ${f.filepath}`)
@@ -231,7 +230,7 @@ ${existingSummary}
 
 Repair these specific files (regenerate or create from scratch):
 ${targets.map(t => `- ${t}`).join("\n")}
-
+${lintNotes ? `\nStatic analysis found these verified defects (line numbers refer to the current file contents — every one of these MUST be fixed in your repaired output):\n${lintNotes}\n` : ""}
 Output JSON now.`;
 
   const models = DEFAULT_MODELS[provider];
@@ -240,27 +239,20 @@ Output JSON now.`;
     { provider, model: models.engineer, system: systemPrompt, userMessage, maxTokens: 12000 },
     fallbacks.engineer,
   );
-  const raw = result.content;
-  const match = raw.match(/\{[\s\S]*\}/);
-  if (!match) {
-    reqLog.error("Repair pass returned no JSON");
+  const parsed = tryExtractJson<{ files?: Array<{ filename: string; filepath: string; content: string; language?: string }> }>(result.content);
+  if (!parsed) {
+    reqLog.error("Repair pass returned no parseable JSON");
     return [];
   }
-  try {
-    const parsed = JSON.parse(match[0]) as { files?: Array<{ filename: string; filepath: string; content: string; language?: string }> };
-    if (!parsed.files || !Array.isArray(parsed.files)) return [];
-    return parsed.files
-      .filter(f => f && typeof f.filename === "string" && typeof f.content === "string")
-      .map(f => ({
-        filename: f.filename,
-        filepath: typeof f.filepath === "string" && f.filepath.length > 0 ? f.filepath : `${appTargetName}/${f.filename}`,
-        content: f.content,
-        language: f.language ?? "swift",
-      }));
-  } catch (repairParseErr) {
-    reqLog.error({ repairParseErr }, "Failed to parse repair JSON");
-    return [];
-  }
+  if (!parsed.files || !Array.isArray(parsed.files)) return [];
+  return parsed.files
+    .filter(f => f && typeof f.filename === "string" && typeof f.content === "string")
+    .map(f => ({
+      filename: f.filename,
+      filepath: typeof f.filepath === "string" && f.filepath.length > 0 ? f.filepath : `${appTargetName}/${f.filename}`,
+      content: f.content,
+      language: f.language ?? "swift",
+    }));
 }
 
 export async function runLivePreviewGeneration(
@@ -410,14 +402,26 @@ export function mergeFiles(
   base: Array<{ filename: string; filepath: string; content: string; language: string; projectId?: number }>,
   patches: Array<{ filename: string; filepath: string; content: string; language: string }>,
 ): Array<{ filename: string; filepath: string; content: string; language: string }> {
-  const byFilename = new Map<string, { filename: string; filepath: string; content: string; language: string }>();
-  for (const f of base) {
-    byFilename.set(f.filename.toLowerCase(), { filename: f.filename, filepath: f.filepath, content: f.content, language: f.language });
-  }
+  const merged = base.map(f => ({ filename: f.filename, filepath: f.filepath, content: f.content, language: f.language }));
   for (const p of patches) {
-    byFilename.set(p.filename.toLowerCase(), p);
+    // Prefer an exact filepath match; fall back to filename only when it is
+    // unambiguous, so a patch for "App/Card.swift" never clobbers an
+    // unrelated "App/Components/Card.swift".
+    const pathIdx = merged.findIndex(f => f.filepath.toLowerCase() === p.filepath.toLowerCase());
+    if (pathIdx >= 0) {
+      merged[pathIdx] = p;
+      continue;
+    }
+    const nameMatches = merged
+      .map((f, i) => ({ f, i }))
+      .filter(({ f }) => f.filename.toLowerCase() === p.filename.toLowerCase());
+    if (nameMatches.length === 1) {
+      merged[nameMatches[0].i] = p;
+    } else {
+      merged.push(p);
+    }
   }
-  return Array.from(byFilename.values());
+  return merged;
 }
 
 export async function detectAmbiguityAndAskQuestions(
@@ -455,31 +459,25 @@ Decide.`;
     fallbacks.planner,
   );
 
-  const raw = result.content;
-  const match = raw.match(/\{[\s\S]*\}/);
-  if (!match) {
+  const parsed = tryExtractJson<{
+    needsClarification?: boolean;
+    questions?: ClarifyingQuestion[];
+  }>(result.content);
+  if (!parsed) {
     return { needsClarification: false, questions: [] };
   }
-  try {
-    const parsed = JSON.parse(match[0]) as {
-      needsClarification?: boolean;
-      questions?: ClarifyingQuestion[];
-    };
-    const questions = Array.isArray(parsed.questions)
-      ? parsed.questions
-          .filter(q => q && typeof q.id === "string" && typeof q.question === "string")
-          .slice(0, 5)
-          .map(q => ({
-            id: q.id,
-            question: q.question,
-            suggestion: typeof q.suggestion === "string" ? q.suggestion : undefined,
-          }))
-      : [];
-    const needs = parsed.needsClarification === true && questions.length > 0;
-    return { needsClarification: needs, questions: needs ? questions : [] };
-  } catch {
-    return { needsClarification: false, questions: [] };
-  }
+  const questions = Array.isArray(parsed.questions)
+    ? parsed.questions
+        .filter(q => q && typeof q.id === "string" && typeof q.question === "string")
+        .slice(0, 5)
+        .map(q => ({
+          id: q.id,
+          question: q.question,
+          suggestion: typeof q.suggestion === "string" ? q.suggestion : undefined,
+        }))
+    : [];
+  const needs = parsed.needsClarification === true && questions.length > 0;
+  return { needsClarification: needs, questions: needs ? questions : [] };
 }
 
 export function buildEnrichedPrompt(

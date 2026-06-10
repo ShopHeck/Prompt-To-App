@@ -1,9 +1,13 @@
 import { db, projectsTable, projectFilesTable, eq } from "@workspace/db";
 import {
   streamAI,
+  callWithFallback,
   DEFAULT_MODELS,
+  FALLBACK_MODELS,
   type Provider,
 } from "./ai-client";
+import { extractJson } from "./json-extract";
+import { lintSwiftFiles, collectLintRepairTargets, formatLintNotes, type LintReport } from "./swift-lint";
 import {
   runAccuracyValidation,
   collectRepairTargets,
@@ -136,30 +140,37 @@ Produce the JSON architecture plan now.`;
 
     let architecturePlan: ArchitecturePlan;
     try {
-      const jsonMatch = planRaw.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error("No JSON object found in planning response");
-      const candidate = JSON.parse(jsonMatch[0]) as ArchitecturePlan;
-      if (!Array.isArray(candidate.screens) || !Array.isArray(candidate.models)) {
-        throw new Error("Plan JSON missing required screens/models arrays");
-      }
-      architecturePlan = {
-        screens: candidate.screens,
-        models: candidate.models,
-        navigation: typeof candidate.navigation === "string" ? candidate.navigation : "",
-        spmDependencies: Array.isArray(candidate.spmDependencies) ? candidate.spmDependencies : [],
-        fileList: Array.isArray(candidate.fileList) ? candidate.fileList : [],
-        componentPatterns: Array.isArray(candidate.componentPatterns) ? candidate.componentPatterns : [],
-      };
+      architecturePlan = this.parseArchitecturePlan(planRaw);
     } catch (planParseErr) {
-      reqLog.error({ planParseErr }, "Failed to parse architecture plan — aborting generation");
-      await endSpan(planningSpanId, { status: "error", error: "plan_parse_failed" });
-      await db
-        .update(projectsTable)
-        .set({ status: "error" })
-        .where(eq(projectsTable.id, projectId));
-      sendEvent({ type: "error", message: "Architecture planning failed — could not parse plan. Please try again." });
-      res.end();
-      return;
+      // The streamed plan was malformed or truncated. Retry once with a
+      // non-streaming JSON-mode call (falling back to the secondary planner
+      // model) before giving up on the whole generation.
+      reqLog.error({ planParseErr }, "Failed to parse architecture plan — retrying with structured output");
+      sendEvent({ type: "planning", message: "Plan response was malformed — retrying..." });
+      try {
+        const retry = await callWithFallback(
+          {
+            provider,
+            model: models.planner,
+            system: planningSystemPrompt,
+            userMessage: planningUserMessage,
+            maxTokens: 4096,
+            responseFormat: "json",
+          },
+          FALLBACK_MODELS[provider].planner,
+        );
+        architecturePlan = this.parseArchitecturePlan(retry.content);
+      } catch (retryErr) {
+        reqLog.error({ retryErr }, "Plan retry also failed — aborting generation");
+        await endSpan(planningSpanId, { status: "error", error: "plan_parse_failed" });
+        await db
+          .update(projectsTable)
+          .set({ status: "error" })
+          .where(eq(projectsTable.id, projectId));
+        sendEvent({ type: "error", message: "Architecture planning failed — could not parse plan. Please try again." });
+        res.end();
+        return;
+      }
     }
 
     const planJson = JSON.stringify(architecturePlan);
@@ -305,8 +316,29 @@ Produce the JSON architecture plan now.`;
 
     const repairHistory: Array<{ at: string; targets: string[]; before: AccuracyReport; after: AccuracyReport }> = [];
 
+    // ── Deterministic lint pass (SwiftUI only) ──────────────────────────────
+    // Catches deprecated APIs / stubs with zero AI cost and feeds verified
+    // defects into the repair targets alongside the AI accuracy report.
+    let lintReport: LintReport | null = null;
+    if (project.framework === "swiftui") {
+      lintReport = lintSwiftFiles(filesToInsert);
+      if (lintReport.findings.length > 0) {
+        reqLog.info?.(
+          { findingCount: lintReport.findings.length, files: lintReport.filesWithIssues },
+          "Static lint found issues in generated Swift files",
+        );
+        sendEvent({
+          type: "lint_report",
+          findingCount: lintReport.findings.length,
+          filesWithIssues: lintReport.filesWithIssues,
+        });
+      }
+    }
+
     // ── Single repair pass if issues found (iOS targets only for now) ───────
-    const repairTargets = collectRepairTargets(report);
+    const lintTargets = lintReport ? collectLintRepairTargets(lintReport) : [];
+    const repairTargets = Array.from(new Set([...collectRepairTargets(report), ...lintTargets])).slice(0, 10);
+    const lintNotes = lintReport && lintReport.findings.length > 0 ? formatLintNotes(lintReport) : null;
     if (repairTargets.length > 0 && (project.framework === "swiftui" || project.framework === "uikit")) {
       const frameworkName = project.framework === "swiftui" ? "SwiftUI" : "UIKit";
       const rawTarget = project.name.replace(/[^a-zA-Z0-9]/g, "");
@@ -331,6 +363,7 @@ Produce the JSON architecture plan now.`;
         project.name,
         validDeps,
         provider,
+        lintNotes,
       );
       if (repairResult) {
         report = repairResult.report;
@@ -451,6 +484,21 @@ Produce the JSON architecture plan now.`;
 
   // ── Private helpers ─────────────────────────────────────────────────────
 
+  private parseArchitecturePlan(raw: string): ArchitecturePlan {
+    const candidate = extractJson<ArchitecturePlan>(raw);
+    if (!Array.isArray(candidate.screens) || !Array.isArray(candidate.models)) {
+      throw new Error("Plan JSON missing required screens/models arrays");
+    }
+    return {
+      screens: candidate.screens,
+      models: candidate.models,
+      navigation: typeof candidate.navigation === "string" ? candidate.navigation : "",
+      spmDependencies: Array.isArray(candidate.spmDependencies) ? candidate.spmDependencies : [],
+      fileList: Array.isArray(candidate.fileList) ? candidate.fileList : [],
+      componentPatterns: Array.isArray(candidate.componentPatterns) ? candidate.componentPatterns : [],
+    };
+  }
+
   private async runRepairPhase(
     reqLog: ReqLogger,
     sendEvent: SendEvent,
@@ -465,6 +513,7 @@ Produce the JSON architecture plan now.`;
     projectName: string,
     validDeps: SpmDependency[],
     provider: Provider,
+    lintNotes: string | null = null,
   ): Promise<{ report: AccuracyReport; finalFileCount: number; history: Array<{ at: string; targets: string[]; before: AccuracyReport; after: AccuracyReport }> } | null> {
     sendEvent({ type: "repairing", message: "Regenerating off-spec or missing files...", targets: repairTargets });
     const history: Array<{ at: string; targets: string[]; before: AccuracyReport; after: AccuracyReport }> = [];
@@ -479,6 +528,7 @@ Produce the JSON architecture plan now.`;
         filesToInsert.map(f => ({ filename: f.filename, filepath: f.filepath, content: f.content, language: f.language })),
         repairTargets,
         provider,
+        lintNotes,
       );
       if (repaired.length > 0) {
         const proposed = mergeFiles(filesToInsert, repaired);

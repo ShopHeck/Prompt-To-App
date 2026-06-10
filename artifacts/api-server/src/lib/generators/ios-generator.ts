@@ -6,7 +6,13 @@ import {
 import { normalizeIosProject } from "../xcode-scaffold";
 import { IOS_QUALITY_STANDARDS } from "../ios-quality-standards";
 import { getSelectedPatterns } from "../component-library";
+import { extractJsonWithMeta, tryExtractJson } from "../json-extract";
 import type { ArchitecturePlan, SpmDependency } from "../types";
+
+type CodeGenPayload = {
+  files: Array<{ filename: string; filepath: string; content: string; language: string }>;
+  description?: string;
+};
 
 /**
  * iOS generator supporting both SwiftUI and UIKit targets.
@@ -98,6 +104,45 @@ Generate Swift sources only. Place every file under ${appTargetName}/. Always in
       if (chunk.finishReason) finishReason = chunk.finishReason;
     }
 
+    // When the model hits the output token cap, ask it to continue from where
+    // it stopped (up to twice) instead of failing the whole generation.
+    let continuations = 0;
+    while (
+      finishReason === "length" &&
+      continuations < 2 &&
+      tryExtractJson<CodeGenPayload>(fullResponse, { repair: false }) === null
+    ) {
+      continuations++;
+      sendEvent({ type: "progress", message: `Output hit the token limit — continuing generation (pass ${continuations})...` });
+      const contStream = streamAI({
+        provider,
+        model: models.engineer,
+        system: systemPrompt,
+        userMessage,
+        maxTokens: 65536,
+        timeoutMs: 300_000,
+        extraMessages: [
+          { role: "assistant", content: fullResponse },
+          {
+            role: "user",
+            content:
+              "Your previous response was cut off by the output token limit. Continue EXACTLY from the last character you emitted, outputting only the remaining text needed to complete the same JSON object. Do not repeat anything already sent, do not restart the JSON, and do not add commentary or markdown fences.",
+          },
+        ],
+      });
+      finishReason = null;
+      let continuation = "";
+      for await (const chunk of contStream) {
+        if (chunk.content) {
+          continuation += chunk.content;
+          totalContentLength += chunk.content.length;
+        }
+        if (chunk.finishReason) finishReason = chunk.finishReason;
+      }
+      // Some models restart with a fence despite instructions — strip it.
+      fullResponse += continuation.replace(/^\s*```(?:json)?\s*/i, "");
+    }
+
     sendEvent({ type: "parsing", message: "Parsing generated files..." });
 
     const parsed = this.parseCodeGenResponse(fullResponse, finishReason);
@@ -152,24 +197,30 @@ Generate Swift sources only. Place every file under ${appTargetName}/. Always in
   private parseCodeGenResponse(
     fullResponse: string,
     finishReason: string | null,
-  ): { files: Array<{ filename: string; filepath: string; content: string; language: string }>; description?: string } {
-    let jsonText = fullResponse.trim();
-    const fenced = jsonText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-    if (fenced) jsonText = fenced[1].trim();
+  ): CodeGenPayload {
+    let extracted: { value: CodeGenPayload; repaired: boolean };
     try {
-      return JSON.parse(jsonText);
+      extracted = extractJsonWithMeta<CodeGenPayload>(fullResponse);
     } catch {
-      const firstBrace = jsonText.indexOf("{");
-      const lastBrace = jsonText.lastIndexOf("}");
-      if (firstBrace === -1 || lastBrace <= firstBrace) {
-        throw new Error(
-          finishReason === "length"
-            ? "Model output was truncated before JSON closed (token cap reached)."
-            : "No JSON object found in model output.",
-        );
-      }
-      return JSON.parse(jsonText.slice(firstBrace, lastBrace + 1));
+      throw new Error(
+        finishReason === "length"
+          ? "Model output was truncated before JSON closed (token cap reached)."
+          : "No JSON object found in model output.",
+      );
     }
+    const payload = extracted.value;
+    if (Array.isArray(payload.files)) {
+      payload.files = payload.files.filter(
+        f => f && typeof f.filename === "string" && typeof f.content === "string",
+      );
+    }
+    if (extracted.repaired && Array.isArray(payload.files) && payload.files.length > 1) {
+      // The document was truncated and force-closed, so the last file entry is
+      // likely incomplete. Drop it — the accuracy validation + repair pass will
+      // regenerate it as a missing file instead of shipping broken Swift.
+      payload.files = payload.files.slice(0, -1);
+    }
+    return payload;
   }
 
   private buildCodeGenSystemPrompt(

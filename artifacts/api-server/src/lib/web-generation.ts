@@ -10,6 +10,7 @@ import {
   getSelectedWebPatterns,
   getScaffoldFiles,
 } from "./web-component-library";
+import { tryExtractJson } from "./json-extract";
 
 export interface WebPlan {
   appName: string;
@@ -129,10 +130,9 @@ export async function runWebPlanning(
     FALLBACK_MODELS[provider].planner,
   );
 
-  const raw = result.content;
-  const jsonMatch = raw.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error("Architect did not return a valid plan.");
-  return JSON.parse(jsonMatch[0]) as WebPlan;
+  const plan = tryExtractJson<WebPlan>(result.content);
+  if (!plan) throw new Error("Architect did not return a valid plan.");
+  return plan;
 }
 
 export async function runWebGeneration(
@@ -181,17 +181,17 @@ Build the app-specific React + Tailwind code. 10-20 files (pages, components, ho
     FALLBACK_MODELS[provider].engineer,
   );
 
-  const raw = result.content;
-  const jsonMatch = raw.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error("Engineer did not return a valid project.");
-
-  const rawProject = JSON.parse(jsonMatch[0]) as {
+  const rawProject = tryExtractJson<{
     appName: string;
     summary: string;
     files: Array<{ path: string; content: string }>;
-  };
+  }>(result.content);
+  if (!rawProject) throw new Error("Engineer did not return a valid project.");
 
   if (!rawProject.files?.length) throw new Error("Engineer returned no files.");
+  rawProject.files = rawProject.files.filter(
+    f => f && typeof f.path === "string" && typeof f.content === "string",
+  );
 
   const engineerPaths = new Set(rawProject.files.map(f => f.path));
   const mergedFiles = [
