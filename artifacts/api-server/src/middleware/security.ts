@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction } from "express";
+import type { CorsOptions } from "cors";
 import helmet from "helmet";
 import crypto from "node:crypto";
 
@@ -65,6 +66,37 @@ export function corsOrigin(
   }
 
   callback(new Error("Not allowed by CORS"));
+}
+
+/**
+ * Per-request CORS options delegate.
+ *
+ * Browsers attach an Origin header to ALL state-changing requests — including
+ * same-origin POST/PUT/DELETE. Since the API serves the frontend from its own
+ * domain in production, running every request through the ALLOWED_ORIGINS
+ * allow-list rejected the app's own form submissions (e.g. "Create project")
+ * unless the deployment also listed its own public domain. Same-origin
+ * requests (Origin host matches the request's Host header) are therefore
+ * always allowed; cross-origin requests still go through corsOrigin above.
+ * Cross-site request forgery remains covered by csrfProtection.
+ */
+export function corsOptionsDelegate(
+  req: { headers: Record<string, string | string[] | undefined> },
+  callback: (err: Error | null, options?: CorsOptions) => void,
+): void {
+  const origin = typeof req.headers.origin === "string" ? req.headers.origin : undefined;
+  const host = typeof req.headers.host === "string" ? req.headers.host : undefined;
+
+  if (origin && host) {
+    try {
+      if (new URL(origin).host === host) {
+        callback(null, { origin: true, credentials: true });
+        return;
+      }
+    } catch { /* malformed Origin header — fall through to allow-list check */ }
+  }
+
+  callback(null, { origin: corsOrigin, credentials: true });
 }
 
 /**
