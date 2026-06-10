@@ -8,7 +8,7 @@ import router from "./routes";
 import { logger } from "./lib/logger";
 import { authMiddleware } from "./middleware/auth";
 import { apiLimiter } from "./middleware/rate-limit";
-import { securityHeaders, corsOrigin, csrfProtection } from "./middleware/security";
+import { securityHeaders, corsOptionsDelegate, csrfProtection } from "./middleware/security";
 import { errorHandler } from "./middleware/error-handler";
 import { metricsMiddleware } from "./middleware/metrics";
 
@@ -65,7 +65,7 @@ if (fs.existsSync(publicDir)) {
   });
 }
 
-app.use(cors({ origin: corsOrigin, credentials: true }));
+app.use(cors(corsOptionsDelegate));
 
 app.use(cookieParser());
 // Raw body for Stripe webhook signature verification
