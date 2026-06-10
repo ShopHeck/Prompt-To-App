@@ -99,6 +99,7 @@ async function buildAll() {
       "puppeteer",
       "puppeteer-core",
       "electron",
+      "jsdom",
     ],
     sourcemap: "linked",
     plugins: [
