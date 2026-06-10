@@ -43,6 +43,7 @@ const DEPRECATED_RULES: LintRule[] = [
   { id: "navbar-placement", pattern: /\.navigationBarLeading\b|\.navigationBarTrailing\b/, message: "Use .topBarLeading/.topBarTrailing toolbar placements" },
   { id: "tab-item", pattern: /\.tabItem\s*\{/, message: "Use the Tab(\"...\", systemImage:) API instead of .tabItem { }" },
   { id: "fixed-font-size", pattern: /\.font\(\.system\(size:/, message: "Use semantic fonts (.body, .headline) or .custom(_:size:relativeTo:) for Dynamic Type" },
+  { id: "state-not-private", pattern: /@(State|FocusState)\s+var\b/, message: "@State/@FocusState properties must be declared private" },
   {
     id: "haptic-generator",
     pattern: /UI(Impact|Notification)FeedbackGenerator/,

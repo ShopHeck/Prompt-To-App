@@ -349,7 +349,7 @@ Produce the HTML preview now.`;
     const models = DEFAULT_MODELS[provider];
     const fallbacks = FALLBACK_MODELS[provider];
     const result = await callWithFallback(
-      { provider, model: models.engineer, system: systemPrompt, userMessage, maxTokens: 14000 },
+      { provider, model: models.engineer, system: systemPrompt, userMessage, maxTokens: 14000, timeoutMs: 300_000 },
       fallbacks.engineer,
     );
     const raw = result.content;
@@ -368,6 +368,7 @@ Produce the HTML preview now.`;
         system: systemPrompt,
         userMessage,
         maxTokens: 14000,
+        timeoutMs: 300_000,
         extraMessages: [
           { role: "assistant", content: html },
           {

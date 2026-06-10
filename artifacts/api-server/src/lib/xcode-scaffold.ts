@@ -108,7 +108,7 @@ name: ${targetName}
 options:
   bundleIdPrefix: ${bundleId.split(".").slice(0, -1).join(".") || "app.myapp"}
   deploymentTarget:
-    iOS: "16.0"
+    iOS: "17.0"
   createIntermediateGroups: true
   generateEmptyDirectories: true
 settings:
@@ -123,7 +123,7 @@ ${packagesBlock}targets:
   ${targetName}:
     type: application
     platform: iOS
-    deploymentTarget: "16.0"
+    deploymentTarget: "17.0"
     sources:
       - path: ${targetName}
     info:
@@ -269,7 +269,7 @@ The following App Store essentials are **already** wired up for you:
 - \`ITSAppUsesNonExemptEncryption=false\` (skips the export-compliance prompt for HTTPS-only apps).
 - \`LSRequiresIPhoneOS=true\` and \`UIRequiredDeviceCapabilities=[arm64]\`.
 - iPhone + iPad device family, modern \`UILaunchScreen\` dictionary, supported orientations.
-- iOS 16.0 deployment target, Swift 5.9, Automatic signing.
+- iOS 17.0 deployment target, Swift 5.9, Automatic signing.
 - Asset catalog with \`AppIcon\` and \`AccentColor\` slots.
 
 ## 5. Archive & ship
