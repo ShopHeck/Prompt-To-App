@@ -1,6 +1,7 @@
 import vm from "node:vm";
 import { callAI, callWithFallback, DEFAULT_MODELS, FALLBACK_MODELS, type Provider, type AICallOptions } from "./ai-client";
 import { extractJson, tryExtractJson } from "./json-extract";
+import { validatePreviewInteractivity } from "./preview-validator";
 import { IOS_QUALITY_STANDARDS } from "./ios-quality-standards";
 import type {
   ArchitecturePlan,
@@ -287,6 +288,11 @@ Hard rules:
 - Inside <body>, layout must be a column: a fixed-height status bar (~44px), a flex-1 SCREEN container that holds the visible <section>, and (when present) a fixed-height tab bar (~84px) at the bottom. The SCREEN container MUST have overflow-y:auto and overscroll-behavior:contain so vertical scrolling happens INSIDE the iframe. Header / tab bar use position:sticky within their flex slots, NOT position:fixed.
 - Render an iOS-style status bar at the top: time "9:41" on the left, signal/wifi/battery glyphs (inline SVG or unicode) on the right, ~44px tall.
 - Implement screen switching with plain vanilla JS (no React, no build step). Use a simple state object that toggles which screen <section data-screen="..."> is visible (display:none vs flex).
+- SCRIPT ARCHITECTURE (the preview is executed and its controls are programmatically clicked before it ships — violations get it rejected):
+  • Put ALL JavaScript in ONE <script> tag placed as the LAST element inside <body>, so every element already exists when it runs. Do not rely on DOMContentLoaded.
+  • Wire ALL taps through ONE delegated listener: \`document.addEventListener('click', (e) => { const el = e.target.closest('[data-action]'); if (!el) return; handleAction(el.dataset.action, el); });\` and give every interactive element a \`data-action\` attribute (plus data-* params as needed). This keeps every control alive even if unrelated code fails. Use plain hoisted \`function\` declarations, not modules or classes-in-closures.
+  • NEVER touch localStorage, sessionStorage, document.cookie, or indexedDB — the preview runs in a sandboxed iframe where storage access THROWS and kills the entire script (this also happens in Safari private browsing). Keep all state in plain JS variables.
+  • Wrap audio, vibration, and any other optional/risky API setup in try { } catch { } so a failure can never break tap handling or the game loop.
 - Include the navigation pattern indicated below: ${navStyle}. For tab bar, render at the bottom with icons + labels, exactly 84px tall (includes safe-area inset). For nav stack, show a sticky header with title and an optional chevron-left back button when not on the root screen.
 - Every interactive element (<button>, list rows that navigate, tab items, toggles, links) MUST have a working JS click/tap handler — no dead controls. Tapping a list row navigates if appropriate; toggles flip a boolean and re-render.
 - FUNCTIONAL CORE MECHANIC (this is the most common failure — read carefully): the preview must actually SIMULATE the app's primary feature, not just navigate around stub screens.
@@ -359,9 +365,40 @@ Produce the HTML preview now.`;
       return null;
     }
 
-    const jsError = findScriptSyntaxError(html);
-    if (jsError) {
-      reqLog.error({ jsError: jsError.error }, "Live preview JS has syntax error — attempting one-shot repair");
+    // Playability gate: parse check first (cheap), then execute the document
+    // in jsdom and actually click its controls. Either failure mode produces
+    // concrete feedback for a one-shot repair.
+    const assessPreview = (candidate: string): { ok: boolean; feedback: string } => {
+      const syntax = findScriptSyntaxError(candidate);
+      if (syntax) {
+        return {
+          ok: false,
+          feedback: `The inline <script> has a JavaScript SYNTAX error, so it never parses and every handler is dead: ${syntax.error}\n\nBroken script excerpt:\n${syntax.snippet}`,
+        };
+      }
+      try {
+        const validation = validatePreviewInteractivity(candidate);
+        if (!validation.ok) {
+          return {
+            ok: false,
+            feedback: `The document parses, but when actually EXECUTED and clicked it is not playable:\n${validation.details}`,
+          };
+        }
+        reqLog.info?.(
+          { handlers: validation.handlerCount, clickables: validation.clickableCount, mutatingClicks: validation.mutatingClicks },
+          "Live preview passed the playability gate",
+        );
+        return { ok: true, feedback: "" };
+      } catch (validatorErr) {
+        // The validator itself failing (jsdom infra) must never block a preview.
+        reqLog.error({ validatorErr }, "Preview playability validator crashed — skipping gate");
+        return { ok: true, feedback: "" };
+      }
+    };
+
+    const initial = assessPreview(html);
+    if (!initial.ok) {
+      reqLog.error({ feedback: initial.feedback.split("\n")[0] }, "Live preview failed playability gate — attempting one-shot repair");
       const repairResult = await callAI({
         provider,
         model: models.engineer,
@@ -373,19 +410,23 @@ Produce the HTML preview now.`;
           { role: "assistant", content: html },
           {
             role: "user",
-            content: `The inline <script> in your previous HTML has a JavaScript syntax error: ${jsError.error}\n\nBroken script excerpt:\n${jsError.snippet}\n\nThis breaks every onclick handler in the preview because the script fails to parse. Re-output the COMPLETE corrected HTML document (same structure, all screens, same content) with the JavaScript fixed. Output the full HTML only — no commentary, no fences.`,
+            content: `Your previous HTML was loaded in a real DOM and its controls were programmatically clicked. It FAILED:\n\n${initial.feedback}\n\nRe-output the COMPLETE corrected HTML document (same screens, same content) with working interactivity. Requirements for the fix:\n- ONE <script> tag as the LAST element inside <body>.\n- All taps wired through a single delegated listener on document plus data-action attributes (plain function declarations, no modules).\n- NEVER touch localStorage/sessionStorage/cookies — in-memory state only (storage THROWS inside the sandboxed preview iframe).\n- Wrap any audio/vibration/optional API setup in try/catch so it cannot kill the script.\nOutput the full HTML only — no commentary, no fences.`,
           },
         ],
       });
-      const repairedRaw = repairResult.content;
-      const repairedHtml = cleanHtml(repairedRaw);
+      const repairedHtml = cleanHtml(repairResult.content);
       if (repairedHtml) {
-        const stillBroken = findScriptSyntaxError(repairedHtml);
-        if (!stillBroken) {
-          reqLog.info?.("Live preview JS repaired successfully");
+        const reassessed = assessPreview(repairedHtml);
+        if (reassessed.ok) {
+          reqLog.info?.("Live preview repaired and now passes the playability gate");
           html = repairedHtml;
         } else {
-          reqLog.error({ stillBroken: stillBroken.error }, "Live preview JS still broken after repair — keeping original");
+          // Neither passes; prefer the repaired version only if the original
+          // had a syntax error (definitely dead) and the repair at least parses.
+          if (findScriptSyntaxError(html) && !findScriptSyntaxError(repairedHtml)) {
+            html = repairedHtml;
+          }
+          reqLog.error({ feedback: reassessed.feedback.split("\n")[0] }, "Live preview still failing playability after repair");
         }
       } else {
         reqLog.error("Live preview repair returned no <html> — keeping original");
