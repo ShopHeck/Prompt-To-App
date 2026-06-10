@@ -5,6 +5,7 @@ import { generationLimiter } from "../middleware/rate-limit";
 import { validateBody } from "../middleware/validate";
 import { refineSchema } from "../lib/request-schemas";
 import { callWithFallback, resolveProvider, DEFAULT_MODELS, FALLBACK_MODELS } from "../lib/ai-client";
+import { tryExtractJson } from "../lib/json-extract";
 import { recordProjectRevision } from "../lib/generation-history";
 import { logger } from "../lib/logger";
 
@@ -145,10 +146,12 @@ Return ONLY the JSON with modified/new files and a summary.`;
       FALLBACK_MODELS[provider].engineer,
     );
 
-    const raw = result.content;
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    const parsed = tryExtractJson<{
+      files?: Array<{ path: string; content: string }>;
+      summary?: string;
+    }>(result.content);
 
-    if (!jsonMatch) {
+    if (!parsed) {
       await db.insert(refinementMessagesTable).values({
         projectId,
         role: "assistant",
@@ -157,11 +160,6 @@ Return ONLY the JSON with modified/new files and a summary.`;
       res.json({ summary: "No changes produced", filesChanged: [] });
       return;
     }
-
-    const parsed = JSON.parse(jsonMatch[0]) as {
-      files?: Array<{ path: string; content: string }>;
-      summary?: string;
-    };
 
     const patchedFiles = parsed.files ?? [];
     const summary = parsed.summary ?? `Updated ${patchedFiles.length} file(s)`;

@@ -1,4 +1,5 @@
 import { callAI, DEFAULT_MODELS, FALLBACK_MODELS, callWithFallback, type Provider } from "./ai-client";
+import { tryExtractJson } from "./json-extract";
 import type { ArchitecturePlan } from "./types";
 
 export interface QualityDimensions {
@@ -165,14 +166,11 @@ Evaluate each dimension 0-10 per the rubric. Be critical but fair. Return ONLY t
       fallbacks.reviewer,
     );
 
-    const raw = result.content;
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
+    const parsed = tryExtractJson<QualityReport>(result.content);
+    if (!parsed) {
       log.error("Quality scorer returned non-JSON response");
       return null;
     }
-
-    const parsed = JSON.parse(jsonMatch[0]) as QualityReport;
 
     if (
       typeof parsed.overallScore !== "number" ||

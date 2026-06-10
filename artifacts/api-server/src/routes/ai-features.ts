@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { db, projectsTable, projectFilesTable, eq } from "@workspace/db";
 import { getStylePresets } from "../lib/style-presets";
 import { getApiKey } from "../lib/ai-client";
+import { tryExtractJson } from "../lib/json-extract";
 import { validateBody } from "../middleware/validate";
 import { generateIconSchema, visualFeedbackSchema } from "../lib/request-schemas";
 
@@ -254,18 +255,10 @@ The patchedFiles array should only include files that need changes. If no patche
 
     const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
 
-    let feedback: { issues: string[]; suggestions: string[]; patchedFiles?: Array<{ path: string; content: string }> };
-    try {
-      feedback = JSON.parse(responseText);
-    } catch {
-      // Try to extract JSON from the response
-      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        feedback = JSON.parse(jsonMatch[0]);
-      } else {
-        res.status(502).json({ error: "Failed to parse AI feedback response" });
-        return;
-      }
+    const feedback = tryExtractJson<{ issues: string[]; suggestions: string[]; patchedFiles?: Array<{ path: string; content: string }> }>(responseText);
+    if (!feedback) {
+      res.status(502).json({ error: "Failed to parse AI feedback response" });
+      return;
     }
 
     res.json({
