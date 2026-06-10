@@ -56,7 +56,7 @@ export function PhonePreview({ src, isGenerating, emptyHint, reloadKey }: PhoneP
                 key={reloadKey ?? 0}
                 src={src}
                 title="App preview"
-                sandbox="allow-scripts allow-forms allow-same-origin"
+                sandbox="allow-scripts allow-forms"
                 referrerPolicy="no-referrer"
                 scrolling="yes"
                 style={{
