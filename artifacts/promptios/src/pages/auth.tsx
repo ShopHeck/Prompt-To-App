@@ -110,8 +110,12 @@ export default function AuthPage() {
 
         {/* Form */}
         <div className="rounded-2xl border border-border/70 bg-card/40 p-6 backdrop-blur-sm">
+          {/* key forces a full remount when switching modes: react-hook-form
+              Controllers do not support swapping their `control` prop in
+              place — without the key React reuses the same Controller nodes
+              for the other form and every input silently drops its input. */}
           {mode === "login" ? (
-            <Form {...loginForm}>
+            <Form {...loginForm} key="login">
               <form onSubmit={loginForm.handleSubmit(onLogin)} className="space-y-5">
                 <FormField
                   control={loginForm.control}
@@ -183,7 +187,7 @@ export default function AuthPage() {
               </form>
             </Form>
           ) : (
-            <Form {...registerForm}>
+            <Form {...registerForm} key="register">
               <form onSubmit={registerForm.handleSubmit(onRegister)} className="space-y-5">
                 <FormField
                   control={registerForm.control}

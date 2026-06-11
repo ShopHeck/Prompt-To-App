@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useLocation } from "wouter";
 import { X, ArrowLeft, ArrowRight, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -78,6 +79,15 @@ const TOUR_STEPS: TourStep[] = [
 
 const STORAGE_KEY = "promptios.tour.seen.v1";
 
+// The tour may only appear on app-shell pages that contain its targets.
+// It must NEVER cover /auth, the landing page, or shared/preview pages —
+// a full-screen z-[100] overlay over the signup form blocks all input for
+// exactly the first-time visitors the form exists for.
+const TOUR_PATHS = [/^\/dashboard/, /^\/projects/, /^\/templates/, /^\/guide/, /^\/settings/];
+function isTourPath(path: string): boolean {
+  return TOUR_PATHS.some((re) => re.test(path));
+}
+
 interface TourContextValue {
   start: () => void;
   isActive: boolean;
@@ -99,10 +109,14 @@ interface TargetRect {
 }
 
 export function TourProvider({ children }: { children: React.ReactNode }) {
+  const [location] = useLocation();
   const [isActive, setIsActive] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
   const [rect, setRect] = useState<TargetRect | null>(null);
   const stepRefreshRef = useRef(0);
+  // Survives even when localStorage writes throw (e.g. Safari private
+  // browsing) so a dismissed tour can never re-spawn within the session.
+  const dismissedRef = useRef(false);
 
   const start = useCallback(() => {
     setStepIndex(0);
@@ -111,17 +125,21 @@ export function TourProvider({ children }: { children: React.ReactNode }) {
 
   const finish = useCallback(() => {
     setIsActive(false);
+    dismissedRef.current = true;
     try {
       window.localStorage.setItem(STORAGE_KEY, "1");
     } catch {}
   }, []);
 
-  // Auto-start on first visit (unless URL says ?skipTour=1, which is useful
-  // for screenshots, recordings, and demos)
+  // Auto-start on the first visit to an app-shell page (unless URL says
+  // ?skipTour=1, which is useful for screenshots, recordings, and demos).
+  // Never auto-start over /auth, the landing page, or shared views.
   useEffect(() => {
+    if (isActive || dismissedRef.current || !isTourPath(location)) return undefined;
     try {
       const params = new URLSearchParams(window.location.search);
       if (params.get("skipTour") === "1") {
+        dismissedRef.current = true;
         window.localStorage.setItem(STORAGE_KEY, "1");
         return undefined;
       }
@@ -132,7 +150,7 @@ export function TourProvider({ children }: { children: React.ReactNode }) {
       }
     } catch {}
     return undefined;
-  }, []);
+  }, [location, isActive]);
 
   // If a step's target isn't on the current page, keep the step active but
   // render the popover centered (handled in TourOverlay via missing rect).
@@ -200,7 +218,7 @@ export function TourProvider({ children }: { children: React.ReactNode }) {
   return (
     <TourContext.Provider value={value}>
       {children}
-      {isActive && step && typeof document !== "undefined" &&
+      {isActive && step && isTourPath(location) && typeof document !== "undefined" &&
         createPortal(
           <TourOverlay
             step={step}
