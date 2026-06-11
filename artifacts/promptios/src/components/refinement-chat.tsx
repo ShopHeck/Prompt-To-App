@@ -32,6 +32,20 @@ export function RefinementChat({ projectId }: RefinementChatProps) {
     },
   });
 
+  const { data: suggestionData } = useQuery({
+    queryKey: ["refine-suggestions", projectId],
+    queryFn: () => api.getRefineSuggestions(projectId),
+    staleTime: 60_000,
+  });
+  const [usedSuggestions, setUsedSuggestions] = useState<Set<string>>(new Set());
+  const suggestions = (suggestionData?.suggestions ?? []).filter((s) => !usedSuggestions.has(s.id));
+
+  function applySuggestion(s: api.RefineSuggestion) {
+    if (refineMut.isPending) return;
+    setUsedSuggestions((prev) => new Set(prev).add(s.id));
+    refineMut.mutate(s.instruction);
+  }
+
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
@@ -133,8 +147,35 @@ export function RefinementChat({ projectId }: RefinementChatProps) {
         )}
       </div>
 
-      {/* Input */}
+      {/* Suggestions + Input */}
       <div className="border-t border-border/60 p-4">
+        {suggestions.length > 0 && (
+          <div className="mb-3">
+            <p className="mb-2 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+              Suggested improvements
+            </p>
+            <div className="flex max-h-24 flex-wrap gap-1.5 overflow-y-auto pb-0.5">
+              {suggestions.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  disabled={refineMut.isPending}
+                  onClick={() => applySuggestion(s)}
+                  title={s.instruction}
+                  data-testid={`suggestion-${s.id}`}
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors disabled:opacity-50 ${
+                    s.impact === "high"
+                      ? "border-primary/40 bg-primary/[0.08] text-foreground hover:bg-primary/[0.16]"
+                      : "border-border/80 bg-secondary/40 text-muted-foreground hover:bg-secondary/80 hover:text-foreground"
+                  }`}
+                >
+                  <Sparkles className={`h-3 w-3 shrink-0 ${s.impact === "high" ? "text-primary" : "text-muted-foreground/70"}`} />
+                  <span className="max-w-[220px] truncate">{s.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <form
           onSubmit={(e) => {
             e.preventDefault();

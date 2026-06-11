@@ -160,3 +160,15 @@ export function refine(projectId: number, instruction: string) {
     body: JSON.stringify({ instruction }),
   });
 }
+
+export interface RefineSuggestion {
+  id: string;
+  label: string;
+  instruction: string;
+  impact: "high" | "medium" | "low";
+  source: "quality" | "accuracy" | "preset";
+}
+
+export function getRefineSuggestions(projectId: number) {
+  return request<{ suggestions: RefineSuggestion[] }>(`/projects/${projectId}/refine-suggestions`);
+}

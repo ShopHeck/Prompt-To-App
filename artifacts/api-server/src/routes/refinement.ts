@@ -6,6 +6,7 @@ import { validateBody } from "../middleware/validate";
 import { refineSchema } from "../lib/request-schemas";
 import { callWithFallback, resolveProvider, DEFAULT_MODELS, FALLBACK_MODELS } from "../lib/ai-client";
 import { tryExtractJson } from "../lib/json-extract";
+import { buildRefineSuggestions } from "../lib/refine-suggestions";
 import { recordProjectRevision } from "../lib/generation-history";
 import { logger } from "../lib/logger";
 
@@ -74,6 +75,33 @@ router.get("/projects/:id/refinements", async (req, res) => {
   }
 });
 
+router.get("/projects/:id/refine-suggestions", async (req, res) => {
+  try {
+    const projectId = Number(req.params.id);
+    if (Number.isNaN(projectId)) {
+      res.status(400).json({ error: "Invalid id" });
+      return;
+    }
+    const [project] = await db
+      .select()
+      .from(projectsTable)
+      .where(eq(projectsTable.id, projectId));
+    if (!project) {
+      res.status(404).json({ error: "Project not found" });
+      return;
+    }
+    const suggestions = buildRefineSuggestions(
+      project.qualityReport,
+      project.accuracyReport,
+      project.framework,
+    );
+    res.json({ suggestions });
+  } catch (err) {
+    req.log.error({ err }, "Failed to build refine suggestions");
+    res.status(500).json({ error: "Failed to build refine suggestions" });
+  }
+});
+
 router.post("/projects/:id/refine", requireAuth, generationLimiter, validateBody(refineSchema), async (req, res) => {
   try {
     const projectId = Number(req.params.id);
@@ -111,17 +139,40 @@ router.post("/projects/:id/refine", requireAuth, generationLimiter, validateBody
       f.filepath.endsWith(".tsx") || f.filepath.endsWith(".jsx") || f.filepath.includes("package.json"),
     );
 
-    const fileManifest = files
-      .slice(0, 15)
-      .map(f => `### ${f.filepath}\n\`\`\`\n${f.content.slice(0, 3000)}\n\`\`\``)
+    // Source files first (the refinable surface), build-system files last,
+    // generated asset JSON excluded. The old slice(0, 15) silently dropped
+    // half the project, so instructions targeting later files went nowhere.
+    const isSource = (p: string) => /\.(swift|tsx?|jsx?|css|html|sql)$/i.test(p);
+    const isAsset = (p: string) => /Contents\.json$|\.xcassets\//.test(p);
+    const ordered = [
+      ...files.filter(f => isSource(f.filepath)),
+      ...files.filter(f => !isSource(f.filepath) && !isAsset(f.filepath)),
+    ];
+    const fileManifest = ordered
+      .slice(0, 40)
+      .map(f => `### ${f.filepath}\n\`\`\`\n${f.content.slice(0, 2500)}\n\`\`\``)
       .join("\n\n");
+
+    // Give the refiner the defects the reviewers already found, so even a
+    // broad instruction ("polish this") targets real, known weak spots.
+    let knownIssuesBlock = "";
+    try {
+      const quality = project.qualityReport ? JSON.parse(project.qualityReport) as { improvements?: Array<{ file?: string; issue?: string; fix?: string }> } : null;
+      const issueLines = (quality?.improvements ?? [])
+        .filter(i => i && (i.issue || i.fix))
+        .slice(0, 6)
+        .map(i => `- ${i.file && i.file !== "general" ? `${i.file}: ` : ""}${i.issue ?? ""}${i.issue && i.fix ? " → " : ""}${i.fix ?? ""}`);
+      if (issueLines.length > 0) {
+        knownIssuesBlock = `\nKnown weak spots from the latest quality review (address any that overlap with the instruction):\n${issueLines.join("\n")}\n`;
+      }
+    } catch { /* unparseable report — skip context */ }
 
     const userMessage = `App: "${project.name}"
 Original prompt: "${project.prompt}"
 
 Current files:
 ${fileManifest}
-
+${knownIssuesBlock}
 User instruction: "${instruction}"
 
 Return ONLY the JSON with modified/new files and a summary.`;
